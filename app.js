@@ -19,16 +19,71 @@ import { firebaseConfig } from './firebase-config.js';
   const biz = key => BIZ.find(b => b.id === key) || BIZ[0];
   const uid = () => crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2);
   let db, page = 'dashboard', form = 'all', catalog = 'products', search = '', catalogSearch = '', period = 'all', analyticsPeriod = 'fy';
+  const ROLES = { owner:['bill','catalog','delete','analytics','backup'], entry:['bill','catalog','analytics'], analyst:['analytics'] };
+  let role = 'owner', backupDir = null, autoEnabled = false, autoTimer = null;
+  const can = w => (ROLES[role] || ROLES.owner).includes(w);
+  function applyRole(){ const top = $('#new-bill-top'); if(top) top.hidden = !can('bill'); }
+  function roleDialog(email){
+    $('#record-dialog').innerHTML = '<div class="modal-head"><div><div class="eyebrow">YOUR ROLE</div><h2>Choose your role</h2><p>Signed in as ' + esc(email) + '. This role applies on every device for this account.</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><div class="modal-body"><div style="display:flex;flex-direction:column;gap:10px">' +
+      [['owner','Owner','Everything, including deleting records and backups'],['entry','Data entry','Create bills and add products or customers'],['analyst','Analyst','View records and analytics, export reports']].map(r => '<button class="button button-light" data-action="pick-role" data-role="' + r[0] + '" style="display:flex;justify-content:space-between;align-items:center;padding:13px 15px"><b style="flex:none">' + r[1] + '</b><span style="font-size:12px;color:var(--muted);text-align:right">' + r[2] + '</span></button>').join('') + '</div></div>';
+    $('#record-dialog').showModal();
+  }
+  async function saveUserRole(email){
+    if(window.KiranaCloud && window.KiranaCloud.configured && window.KiranaCloud.user && email){
+      try{ await window.KiranaCloud.write('users', { id: email, role: role, updatedAt: new Date().toISOString() }); }catch(e){ console.warn('Role save queued.', e); }
+    }
+  }
+  function getSetting(id){ return new Promise(resolve => { try{ const r = db.transaction('settings').objectStore('settings').get(id); r.onsuccess = () => resolve(r.result && r.result.handle); r.onerror = () => resolve(null); }catch(e){ resolve(null); } }); }
+  function saveSetting(id, value){ return new Promise((resolve, reject) => { const tx = db.transaction('settings','readwrite'); tx.objectStore('settings').put({ id, handle: value }); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }); }
+  async function loadBackupDir(){
+    if(!window.showDirectoryPicker) return;
+    try{
+      const h = await getSetting('backupDir');
+      if(h){ backupDir = h; const q = await h.queryPermission({ mode:'readwrite' }); if(q === 'granted'){ autoEnabled = true; writeAutoBackup('startup'); } }
+    }catch(e){ console.warn('Auto backup load skipped.', e); }
+  }
+  async function pickBackupDir(){
+    if(!window.showDirectoryPicker){ toast('Automatic backup needs Chrome or Edge on a computer.', true); return; }
+    try{
+      const h = await showDirectoryPicker({ mode:'readwrite' });
+      backupDir = h; await saveSetting('backupDir', h);
+      const q = await h.queryPermission({ mode:'readwrite' });
+      if(q === 'granted'){ autoEnabled = true; await writeAutoBackup('folder-set'); }
+      toast('Auto backup folder set. Records will be copied there after every change.');
+      if(page === 'backup') render();
+    }catch(e){ /* folder picker cancelled */ }
+  }
+  async function reallowBackup(){
+    if(!backupDir) return;
+    try{ const q = await backupDir.requestPermission({ mode:'readwrite' }); if(q === 'granted'){ autoEnabled = true; await writeAutoBackup('reallow'); toast('Automatic backup is back on.'); if(page === 'backup') render(); } }catch(e){ console.warn(e); }
+  }
+  async function writeAutoBackup(reason){
+    if(!backupDir || !db) return;
+    try{
+      const q = await backupDir.queryPermission({ mode:'readwrite' });
+      if(q !== 'granted'){ autoEnabled = false; return; }
+      const r = await Promise.all([all('bills'), all('counters'), all('products'), all('customers')]);
+      const data = { app:'Kirana Desk', schemaVersion:1, exportedAt:new Date().toISOString(), auto:true, reason:reason, bills:r[0], counters:r[1], products:r[2], customers:r[3] };
+      const fh = await backupDir.getFileHandle('kirana-desk-backup-' + today() + '.json', { create:true });
+      const w = await fh.createWritable();
+      await w.write(new Blob([JSON.stringify(data, null, 2)], { type:'application/json' }));
+      await w.close();
+      localStorage.setItem('kiranaDeskLastBackup', new Date().toISOString());
+      if(page === 'backup') render();
+    }catch(e){ console.warn('Automatic backup failed this time.', e); }
+  }
+  function scheduleAutoBackup(){ if(!autoEnabled) return; clearTimeout(autoTimer); autoTimer = setTimeout(() => writeAutoBackup('change'), 15000); }
 
   function openDb() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open('kirana-desk', 1);
+      const req = indexedDB.open('kirana-desk', 2);
       req.onupgradeneeded = () => {
         const d = req.result;
         d.createObjectStore('bills', { keyPath:'id' }).createIndex('date', 'date');
         d.createObjectStore('counters', { keyPath:'id' });
         d.createObjectStore('products', { keyPath:'id' });
         d.createObjectStore('customers', { keyPath:'id' });
+        d.createObjectStore('settings', { keyPath:'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -48,12 +103,12 @@ import { firebaseConfig } from './firebase-config.js';
     return localAll(store);
   }
   async function put(store, value) {
-    await putLocal(store,value);
+    await putLocal(store,value);scheduleAutoBackup();
     if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user)window.KiranaCloud.write(store,value).catch(error=>{console.warn('Cloud write is queued or unavailable.',error);$('#online-label').textContent='Sync pending';});
     return value;
   }
   async function del(store, key) {
-    await delLocal(store,key);
+    await delLocal(store,key);scheduleAutoBackup();
     if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user)window.KiranaCloud.delete(store,key).catch(error=>{console.warn('Cloud delete is queued or unavailable.',error);$('#online-label').textContent='Sync pending';});
   }
   function makeBill(data) {
@@ -63,7 +118,7 @@ import { firebaseConfig } from './firebase-config.js';
         const tx=db.transaction(['counters','bills'],'readwrite');
         tx.objectStore('counters').put({id:saved.businessId+':'+saved.financialYear,businessId:saved.businessId,financialYear:saved.financialYear,lastNumber:saved.sequence});
         tx.objectStore('bills').put(saved);
-        tx.oncomplete=()=>resolve(saved);tx.onerror=()=>reject(tx.error);
+        tx.oncomplete=()=>{resolve(saved);scheduleAutoBackup();};tx.onerror=()=>reject(tx.error);
       }));
     }
     return new Promise((resolve, reject) => {
@@ -76,7 +131,7 @@ import { firebaseConfig } from './firebase-config.js';
         counters.put({ id:counterId, businessId:data.businessId, financialYear:year, lastNumber:seq });
         tx.objectStore('bills').add(saved);
       };
-      tx.oncomplete = () => resolve(saved); tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => { resolve(saved); scheduleAutoBackup(); }; tx.onerror = () => reject(tx.error);
     });
   }
   function toast(message, error) { const n = document.createElement('div'); n.className = 'toast' + (error ? ' error' : ''); n.textContent = message; $('#toast-region').append(n); setTimeout(() => n.remove(), 3200); }
@@ -86,7 +141,7 @@ import { firebaseConfig } from './firebase-config.js';
   function chip(key) { const b = biz(key); return '<span class="business-chip"><i style="background:' + b.color + '"></i>' + esc(b.name) + '</span>'; }
   function empty(title, text, button) { return '<div class="empty-state"><div class="empty-mark">＋</div><b>' + title + '</b><p>' + text + '</p>' + (button || '') + '</div>'; }
   function billTable(items, showForm) {
-    if (!items.length) return empty('No bills yet', 'Create your first dispatch bill. Each form gets its own number sequence for every financial year.', '<button class="button button-primary" data-action="new-bill">＋ Create first bill</button>');
+    if (!items.length) return empty('No bills yet', 'Create your first dispatch bill. Each form gets its own number sequence for every financial year.', can('bill') ? '<button class="button button-primary" data-action="new-bill">＋ Create first bill</button>' : '');
     return '<div class="table-wrap"><table class="data-table"><thead><tr><th>BILL NUMBER</th>' + (showForm ? '<th>FORM</th>' : '') + '<th>CUSTOMER</th><th>DATE</th><th>ITEMS</th><th>QUANTITY</th><th></th></tr></thead><tbody>' + items.map(b => {
       const q = b.items.reduce((s, i) => s + Number(i.quantity || 0), 0);
       return '<tr><td class="strong-cell">' + esc(b.billNumber) + '</td>' + (showForm ? '<td>' + chip(b.businessId) + '</td>' : '') + '<td>' + esc(b.customerName) + '</td><td class="muted-cell">' + dateLabel(b.date) + '</td><td>' + b.items.length + '</td><td>' + number(q) + '</td><td><button class="icon-button" data-action="view-bill" data-id="' + esc(b.id) + '" title="View record">↗</button></td></tr>';
@@ -98,9 +153,9 @@ import { firebaseConfig } from './firebase-config.js';
     const itemLines = current.reduce((s, b) => s + b.items.length, 0);
     const p = products.filter(x => form === 'all' || x.businessId === form), c = customers.filter(x => form === 'all' || x.businessId === form);
     const recent = chosen.sort((a,b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)).slice(0,6);
-    $('#page-content').innerHTML = head('GOOD DAY', form === 'all' ? 'Dispatch overview' : esc(biz(form).name), 'Track bills and quantities for FY ' + year + '.', '<div class="head-actions"><button class="button button-primary" data-action="new-bill">＋ Create bill</button></div>') + tabs() +
+    $('#page-content').innerHTML = head('GOOD DAY', form === 'all' ? 'Dispatch overview' : esc(biz(form).name), 'Track bills and quantities for FY ' + year + '.', '<div class="head-actions">' + (can('bill') ? '<button class="button button-primary" data-action="new-bill">＋ Create bill</button>' : '') + '</div>') + tabs() +
       '<section class="stats-grid">' + stat('Bills this financial year', current.length, 'Across FY ' + year, '▤') + stat('Items dispatched', itemLines, 'Bill line items this FY', '↗') + stat('Products in catalog', p.length, 'Across selected forms', '◫') + stat('Saved customers', c.length, 'Across selected forms', '♙') + '</section>' +
-      '<div class="quick-grid">' + BIZ.map(b => '<article class="form-card"><span class="form-code">' + b.prefix + '</span><h3>' + esc(b.name) + '</h3><p>Start a dispatch bill. Numbering is separate for this form.</p><button class="button button-light button-small" data-action="new-bill" data-form="' + b.id + '">Create bill →</button></article>').join('') + '</div>' +
+      (can('bill') ? '<div class="quick-grid">' + BIZ.map(b => '<article class="form-card"><span class="form-code">' + b.prefix + '</span><h3>' + esc(b.name) + '</h3><p>Start a dispatch bill. Numbering is separate for this form.</p><button class="button button-light button-small" data-action="new-bill" data-form="' + b.id + '">Create bill →</button></article>').join('') + '</div>' : '') +
       '<section class="panel activity-panel"><div class="panel-head"><div><div class="panel-title">Recent bills</div><div class="panel-caption">Latest dispatches</div></div><button class="button button-light button-small" data-action="goto-bills">View all bills →</button></div>' + billTable(recent, form === 'all') + '</section>';
   }
   async function renderBills() {
@@ -109,14 +164,14 @@ import { firebaseConfig } from './firebase-config.js';
       const q = search.toLowerCase(), match = !q || [b.billNumber,b.customerName,...b.items.map(i => i.productName)].some(v => String(v).toLowerCase().includes(q));
       return (form === 'all' || b.businessId === form) && match && (period === 'all' || (period === 'fy' ? b.financialYear === fy(today()) : b.date.startsWith(period)));
     });
-    $('#page-content').innerHTML = head('DISPATCH RECORDS','Dispatch records','Find and review entries without paging through the bill book.','<div class="head-actions"><button class="button button-primary" data-action="new-bill">＋ Add record</button></div>') + tabs() +
+    $('#page-content').innerHTML = head('DISPATCH RECORDS','Dispatch records','Find and review entries without paging through the bill book.','<div class="head-actions">' + (can('bill') ? '<button class="button button-primary" data-action="new-bill">＋ Add record</button>' : '') + '</div>') + tabs() +
       '<section class="panel"><div class="toolbar" style="padding:15px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="bill-search" class="input" placeholder="Search bill, customer, product…" value="' + esc(search) + '"></div><span class="tag gray">' + visible.length + ' bills</span></div><div class="toolbar-right"><select id="bill-period" class="select" style="width:auto"><option value="all">All dates</option><option value="fy" ' + (period === 'fy' ? 'selected' : '') + '>Current FY</option></select></div></div>' + billTable(visible, form === 'all') + '</section>';
   }
   async function renderCatalog() {
     const res = await Promise.all([all('products'),all('customers')]), products=res[0], customers=res[1], list=catalog==='products'?products:customers;
     const shown = list.filter(r => (form==='all'||r.businessId===form) && (!catalogSearch || (r.name+' '+(r.note||'')).toLowerCase().includes(catalogSearch.toLowerCase())));
-    const label = catalog==='products'?'product':'customer', records = shown.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>'+(catalog==='products'?'PRODUCT':'CUSTOMER')+'</th><th>FORM</th><th>'+(catalog==='products'?'UNIT':'CONTACT / NOTE')+'</th><th>ADDED</th><th></th></tr></thead><tbody>'+shown.map(r => '<tr><td><div class="row-title"><span class="avatar">'+esc(r.name.slice(0,1).toUpperCase())+'</span><span class="strong-cell">'+esc(r.name)+'</span>'+(r.isSample?'<span class="tag gray">SAMPLE</span>':'')+'</div></td><td>'+chip(r.businessId)+'</td><td class="muted-cell">'+esc(catalog==='products'?(r.unit||'—'):(r.note||'—'))+'</td><td class="muted-cell">'+dateLabel(r.createdAt.slice(0,10))+'</td><td><button class="icon-button" data-action="edit-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Edit">✎</button><button class="icon-button" data-action="delete-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Delete">⌫</button></td></tr>').join('')+'</tbody></table></div>' : empty('No '+catalog+' yet','Add '+(catalog==='products'?'products dispatched from this form':'the people who receive products from this form')+'. They will be searchable on bills.','<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>');
-    $('#page-content').innerHTML = head('MASTER LISTS','Products & customers','Each form has its own searchable lists.','<div class="head-actions"><button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button></div>')+tabs()+
+    const label = catalog==='products'?'product':'customer', records = shown.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>'+(catalog==='products'?'PRODUCT':'CUSTOMER')+'</th><th>FORM</th><th>'+(catalog==='products'?'UNIT':'CONTACT / NOTE')+'</th><th>ADDED</th><th></th></tr></thead><tbody>'+shown.map(r => '<tr><td><div class="row-title"><span class="avatar">'+esc(r.name.slice(0,1).toUpperCase())+'</span><span class="strong-cell">'+esc(r.name)+'</span>'+(r.isSample?'<span class="tag gray">SAMPLE</span>':'')+'</div></td><td>'+chip(r.businessId)+'</td><td class="muted-cell">'+esc(catalog==='products'?(r.unit||'—'):(r.note||'—'))+'</td><td class="muted-cell">'+dateLabel(r.createdAt.slice(0,10))+'</td><td>'+(can('catalog')?'<button class="icon-button" data-action="edit-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Edit">✎</button>':'')+(can('delete')?'<button class="icon-button" data-action="delete-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Delete">⌫</button>':'')+'</td></tr>').join('')+'</tbody></table></div>' : empty('No '+catalog+' yet','Add '+(catalog==='products'?'products dispatched from this form':'the people who receive products from this form')+'. They will be searchable on bills.', can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '');
+    $('#page-content').innerHTML = head('MASTER LISTS','Products & customers','Each form has its own searchable lists.','<div class="head-actions">' + (can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '') + '</div>')+tabs()+
       '<div class="tabs-underline"><button class="underline-tab '+(catalog==='products'?'active':'')+'" data-catalog-tab="products">Products ('+products.filter(r=>form==='all'||r.businessId===form).length+')</button><button class="underline-tab '+(catalog==='customers'?'active':'')+'" data-catalog-tab="customers">Customers ('+customers.filter(r=>form==='all'||r.businessId===form).length+')</button></div><section class="panel" style="margin-top:15px"><div class="toolbar" style="padding:14px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="catalog-search" class="input" placeholder="Search '+catalog+'…" value="'+esc(catalogSearch)+'"></div><span class="tag gray">'+shown.length+' records</span></div></div>'+records+'</section>';
   }
   function startDate(scope) {
@@ -136,12 +191,17 @@ import { firebaseConfig } from './firebase-config.js';
       '<div class="toolbar" style="justify-content:flex-end;margin:0 0 13px"><div class="toolbar-right"><span class="field-label" style="margin:0">PERIOD</span><select id="analytics-period" class="select" style="width:auto"><option value="fy" '+(analyticsPeriod==='fy'?'selected':'')+'>Current financial year</option><option value="3" '+(analyticsPeriod==='3'?'selected':'')+'>Last 3 months</option><option value="6" '+(analyticsPeriod==='6'?'selected':'')+'>Last 6 months</option><option value="12" '+(analyticsPeriod==='12'?'selected':'')+'>Last 12 months</option></select></div></div>'+
       '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Products by quantity</div><div class="panel-caption">Most dispatched in this period</div></div></div>'+productRows+'</section><section class="panel"><div class="panel-head"><div><div class="panel-title">Frequent customers</div><div class="panel-caption">Ranked by number of bills</div></div></div>'+customerRows+'</section></div>';
   }
+  function autoBackupPanel(){
+    if(!window.showDirectoryPicker) return '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Automatic backup</div><div class="panel-caption">Needs Chrome or Edge on a computer.</div></div></div></section>';
+    const auto = backupDir && autoEnabled;
+    return '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Automatic backup on this computer</div><div class="panel-caption">A fresh copy is saved here after every change, even if the shared backend fails.</div></div></div><div style="padding:19px">'+(backupDir?'<span class="tag gray">Folder: '+esc(backupDir.name)+'</span> ':'')+'<button class="button button-primary" data-action="set-backup-folder">'+(backupDir?'Change folder':'Choose auto backup folder')+'</button> '+(backupDir&&!autoEnabled?'<button class="button button-light" data-action="reallow-backup">Allow access again</button>':'')+'<p class="field-hint" style="line-height:1.6;margin-top:10px">'+(auto?'Automatic backup is on. One file per day, always the latest records inside.':'Choose the folder once. Chrome or Edge will ask for permission, then keep the copy fresh on its own.')+'</p></div></section>';
+  }
   async function renderBackup() {
     const res=await Promise.all([all('bills'),all('products'),all('customers')]), last=localStorage.getItem('kiranaDeskLastBackup');
     $('#page-content').innerHTML=head('DATA SAFETY','Backup & restore','Create a portable copy of the records on this computer.')+
       '<div class="notice"><strong>How your data is saved:</strong> your bills, customers, and products are stored in this browser on this computer. They work offline. Export backups to protect against device loss or cleared browser data.</div>'+
       '<section class="stats-grid" style="margin-top:16px">'+stat('Bills',res[0].length,'On this computer','▤')+stat('Products',res[1].length,'On this computer','◫')+stat('Customers',res[2].length,'On this computer','♙')+stat('Last backup',last?dateLabel(last.slice(0,10)):'Not yet',last?new Date(last).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'Export a copy now','↥')+'</section>'+
-      '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Create a backup</div><div class="panel-caption">All forms, lists, bills, and bill counters in one file.</div></div></div><div style="padding:19px"><button class="button button-primary" data-action="export-backup">↓ Download backup file</button><p class="field-hint" style="line-height:1.6">Save the file somewhere private and separate. Create a fresh copy after each day’s work.</p></div></section><section class="panel"><div class="panel-head"><div><div class="panel-title">Restore a backup</div><div class="panel-caption">Replace local records with a saved backup.</div></div></div><div style="padding:19px"><label class="button button-light" for="backup-file">Choose backup file</label><input id="backup-file" type="file" accept="application/json,.json" hidden><p class="field-hint" style="line-height:1.6">Restore replaces current local data. Export it first if you want to keep a copy.</p></div></section></div>'+
+      '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Create a backup</div><div class="panel-caption">All forms, lists, bills, and bill counters in one file.</div></div></div><div style="padding:19px"><button class="button button-primary" data-action="export-backup">↓ Download backup file</button><p class="field-hint" style="line-height:1.6">Save the file somewhere private and separate. Create a fresh copy after each day’s work.</p></div></section><section class="panel"><div class="panel-head"><div><div class="panel-title">Restore a backup</div><div class="panel-caption">Replace local records with a saved backup.</div></div></div><div style="padding:19px"><label class="button button-light" for="backup-file">Choose backup file</label><input id="backup-file" type="file" accept="application/json,.json" hidden><p class="field-hint" style="line-height:1.6">Restore replaces current local data. Export it first if you want to keep a copy.</p></div></section></section>' + autoBackupPanel() + '</div>'+
       '<div class="backup-steps"><div class="backup-step"><span class="step-number">1</span><b>Export after billing</b><p>Download a fresh copy after each work session.</p></div><div class="backup-step"><span class="step-number">2</span><b>Keep another copy</b><p>Move the file to a separate drive or your brother’s computer.</p></div><div class="backup-step"><span class="step-number">3</span><b>Restore when needed</b><p>Choose the file on the computer where you want the records.</p></div></div>';
   }
   async function render() {
@@ -157,7 +217,7 @@ import { firebaseConfig } from './firebase-config.js';
        '<form id="bill-form"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><select id="bill-business" name="businessId" class="select" '+(readonly?'disabled':'')+'>'+BIZ.map(b=>'<option value="'+b.id+'" '+(data.businessId===b.id?'selected':'')+'>'+esc(b.name)+'</option>').join('')+'</select></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(readonly?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" name="customerName" list="customer-list" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(readonly?'readonly':'')+'><datalist id="customer-list">'+customers.map(x=>'<option value="'+esc(x.name)+'">').join('')+'</datalist></div></div>'+
        '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(readonly?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table"><div class="items-table-head"><div>PRODUCT</div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div><datalist id="product-list">'+products.map(x=>'<option value="'+esc(x.name)+'">').join('')+'</datalist><datalist id="unit-list">'+['bag','kg','g','litre','box','piece','quintal','tonne','packet','dozen'].map(x=>'<option value="'+x+'">').join('')+'</datalist></div>'+
        '<div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(readonly?'readonly':'')+'></div><div class="modal-section helper-box">'+(readonly?'Saved dispatch record.':'Bill number is assigned on save. Sequences are separate by form and restart each Indian financial year (1 April). No prices or GST.')+'</div></div>'+
-       '<div class="modal-foot">'+(readonly?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete record</button>':'<span class="field-hint">Product · quantity · unit</span>')+'<div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(readonly?'':'<button class="button button-primary" type="submit">Save record</button>')+'</div></div></form>';
+       '<div class="modal-foot">'+(readonly?(can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete record</button>':''): '<span class="field-hint">Product · quantity · unit</span>')+'<div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(readonly?'':'<button class="button button-primary" type="submit">Save record</button>')+'</div></div></form>';
     }).catch(e=>{console.error(e);toast('Could not load your catalog.',true);});
   }
   function newBill(key) { const businessId=key||(form==='all'?'sampurn':form); billDialog({businessId,date:today(),customerName:'',items:[{productName:'',quantity:'',unit:''}],notes:''}); $('#bill-dialog').showModal(); }
@@ -185,7 +245,7 @@ import { firebaseConfig } from './firebase-config.js';
     if(data.app!=='Kirana Desk'||data.schemaVersion!==1||!['bills','counters','products','customers'].every(k=>Array.isArray(data[k])))throw new Error('This is not a valid Kirana Desk backup.');
     if(!confirm('Restore '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers? Current records on this computer will be replaced.'))return;
     await new Promise((resolve,reject)=>{const tx=db.transaction(['bills','counters','products','customers'],'readwrite');['bills','counters','products','customers'].forEach(k=>{const s=tx.objectStore(k);s.clear();data[k].forEach(x=>s.put(x));});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
-    localStorage.setItem('kiranaDeskLastBackup',data.exportedAt||new Date().toISOString()); localStorage.setItem('kiranaDeskSampleSeeded','yes'); toast('Backup restored.'); render();
+    localStorage.setItem('kiranaDeskLastBackup',data.exportedAt||new Date().toISOString()); localStorage.setItem('kiranaDeskSampleSeeded','yes'); scheduleAutoBackup(); toast('Backup restored.'); render();
   }
   async function seedSamples() {
     if(localStorage.getItem('kiranaDeskSampleSeeded'))return;
@@ -240,6 +300,10 @@ import { firebaseConfig } from './firebase-config.js';
     if(x==='view-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){billDialog(b);$('#bill-dialog').showModal();}});
     if(x==='delete-bill'&&confirm('Delete this bill? Its number remains reserved and will never be reused.'))del('bills',a.dataset.id).then(()=>{$('#bill-dialog').close();toast('Bill deleted. Number remains reserved.');render();});
     if(x==='delete-record'&&confirm('Delete this catalog entry? Existing bills will not change.'))del(a.dataset.kind,a.dataset.id).then(()=>{toast('Catalog entry removed.');render();});
+
+    if(x==='set-backup-folder')pickBackupDir();
+    if(x==='reallow-backup')reallowBackup();
+    if(x==='pick-role'&&ROLES[a.dataset.role]){role=a.dataset.role;$('#record-dialog').close();applyRole();render();saveUserRole(window.KiranaCloud&&window.KiranaCloud.user?window.KiranaCloud.user.email:'');toast('Role saved.');}
   });
   document.addEventListener('input',e=>{
     if(e.target.id==='bill-search'){search=e.target.value;const n=e.target.value.length;renderBills().then(()=>{const field=$('#bill-search');if(field){field.focus();field.setSelectionRange(n,n);}});}
@@ -278,6 +342,7 @@ import { firebaseConfig } from './firebase-config.js';
   async function start(){
     try{
       db=await openDb();
+      loadBackupDir();applyRole();
       const firebaseExpected=Boolean(firebaseConfig&&firebaseConfig.apiKey&&!firebaseConfig.apiKey.startsWith('REPLACE_'));
       if(firebaseExpected&&!(window.KiranaCloud&&window.KiranaCloud.configured)){
         $('#auth-gate').hidden=false;$('#sign-in-form').hidden=true;$('#auth-error').textContent='Cloud connection did not load. Connect to the internet and reload this page.';return;
@@ -289,6 +354,8 @@ import { firebaseConfig } from './firebase-config.js';
           subscriptions.forEach(stop=>stop());subscriptions=[];
           if(!user){$('#auth-gate').hidden=false;$('#sign-out').hidden=true;return;}
           $('#auth-gate').hidden=true;$('#sign-out').hidden=false;$('#online-label').textContent='Shared workspace';
+          try{const users=await window.KiranaCloud.list('users');const mine=users.find(u=>u.id===user.email);if(mine&&ROLES[mine.role])role=mine.role;else{role='owner';roleDialog(user.email);}}catch(e){role='owner';}
+          applyRole();
           try{
             await reconcileCloud();await seedSamples();
             subscriptions=window.KiranaCloud.listen(async(store,records)=>{
