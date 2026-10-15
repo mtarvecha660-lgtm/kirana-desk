@@ -333,8 +333,8 @@ import { firebaseConfig } from './firebase-config.js';
   $('#new-bill-top').addEventListener('click',()=>newBill());
   $('#sign-in-form').addEventListener('submit',async e=>{
     e.preventDefault();const data=new FormData(e.currentTarget), error=$('#auth-error');error.textContent='';
-    try{await window.KiranaCloud.signIn(String(data.get('email')).trim(),String(data.get('password')));}
-    catch(err){console.error(err);error.textContent=err.code==='auth/invalid-credential'?'Email or password is incorrect.':'Could not sign in. Check your connection and account details.';}
+    const ids={papa:'mtarvecha660@gmail.com',bhai:'moksh7tarvecha@gmail.com'};const raw=String(data.get('email')).trim();const email=raw.includes('@')?raw:(ids[raw.toLowerCase()]||raw);try{await window.KiranaCloud.signIn(email,String(data.get('password')));}
+    catch(err){console.error(err);error.textContent=err.code==='auth/invalid-credential'?'Name or password is incorrect.':'Could not sign in. Check your connection and account details.';}
   });
   $('#sign-out').addEventListener('click',()=>window.KiranaCloud.signOut().catch(()=>toast('Could not sign out.',true)));
   window.addEventListener('online',()=>$('#online-label').textContent='Offline ready');
