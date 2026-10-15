@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102b24">
+  <meta name="description" content="A simple digital dispatch register and analytics for Sampurn Kirana, Surya Supplies, and Dhanraj Products.">
+  <title>Kirana Desk — Dispatch register</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#dashboard" aria-label="Kirana Desk home">
+        <span class="brand-mark">K</span>
+        <span><b>Kirana Desk</b><small>Dispatch register</small></span>
+      </a>
+      <div class="nav-label">WORKSPACE</div>
+      <nav class="main-nav" aria-label="Main navigation">
+        <button class="nav-item active" data-page="dashboard"><span class="nav-icon">▦</span> Overview</button>
+        <button class="nav-item" data-page="bills"><span class="nav-icon">▤</span> Records <span id="bill-nav-count" class="nav-count">0</span></button>
+        <button class="nav-item" data-page="catalog"><span class="nav-icon">◫</span> Products & customers</button>
+        <button class="nav-item" data-page="analytics"><span class="nav-icon">⌁</span> Analytics</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="storage-card"><span class="storage-dot"></span><div><b>Saved on this computer</b><small id="storage-label">Offline ready</small></div></div>
+        <button class="nav-item" data-page="backup"><span class="nav-icon">↥</span> Backup & restore</button>
+        <div class="sidebar-foot">KIRANA DESK <span>•</span> PRIVATE WORKSPACE</div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="breadcrumb"><span>Workspace</span><b>/</b><strong id="page-crumb">Overview</strong></div>
+        <div class="top-actions"><span class="online-pill"><i></i> <span id="online-label">Offline ready</span></span><button class="button button-light button-small" id="sign-out" hidden>Sign out</button><button class="button button-primary button-small" id="new-bill-top"><span>＋</span> New record</button></div>
+      </header>
+      <div id="page-content" class="page-content"></div>
+    </main>
+  </div>
+  <section id="auth-gate" class="auth-gate" hidden>
+    <form id="sign-in-form" class="auth-card">
+      <span class="brand-mark">K</span>
+      <div class="eyebrow">PRIVATE FAMILY WORKSPACE</div>
+      <h1>Sign in to Kirana Desk</h1>
+      <p>Use your authorized account to open the shared dispatch register.</p>
+      <label class="field-label" for="login-email">EMAIL</label>
+      <input class="input" id="login-email" name="email" type="email" autocomplete="username" required>
+      <label class="field-label auth-password-label" for="login-password">PASSWORD</label>
+      <input class="input" id="login-password" name="password" type="password" autocomplete="current-password" required>
+      <div id="auth-error" class="auth-error" role="status"></div>
+      <button class="button button-primary auth-submit" type="submit">Sign in</button>
+      <small>Accounts are created by the workspace owner.</small>
+    </form>
+  </section>
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+  <dialog id="bill-dialog" class="modal"></dialog>
+  <dialog id="record-dialog" class="modal modal-narrow"></dialog>
+  <script type="module" src="firebase.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

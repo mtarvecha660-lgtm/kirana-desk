@@ -1,0 +1,307 @@
+import { firebaseConfig } from './firebase-config.js';
+
+/* Local-first dispatch register. Intentionally contains no price, GST, or payment fields. */
+(() => {
+  'use strict';
+  const BIZ = [
+    { id: 'sampurn', name: 'Sampurn Kirana', prefix: 'SK', color: '#a5cc62' },
+    { id: 'surya', name: 'Surya Supplies', prefix: 'SS', color: '#76b7a6' },
+    { id: 'dhanraj', name: 'Dhanraj Products', prefix: 'DP', color: '#d1a66c' }
+  ];
+  const names = { dashboard: 'Overview', bills: 'Dispatch records', catalog: 'Products & customers', analytics: 'Analytics', backup: 'Backup & restore' };
+  const $ = (s, root = document) => root.querySelector(s);
+  const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const fy = value => { const d = new Date(value + 'T12:00:00'); const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; return y + '-' + String(y + 1).slice(-2); };
+  const dateLabel = value => new Intl.DateTimeFormat('en-IN', { day:'2-digit', month:'short', year:'numeric' }).format(new Date(value + 'T12:00:00'));
+  const number = v => new Intl.NumberFormat('en-IN', { maximumFractionDigits:3 }).format(Number(v) || 0);
+  const biz = key => BIZ.find(b => b.id === key) || BIZ[0];
+  const uid = () => crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2);
+  let db, page = 'dashboard', form = 'all', catalog = 'products', search = '', catalogSearch = '', period = 'all', analyticsPeriod = 'fy';
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('kirana-desk', 1);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        d.createObjectStore('bills', { keyPath:'id' }).createIndex('date', 'date');
+        d.createObjectStore('counters', { keyPath:'id' });
+        d.createObjectStore('products', { keyPath:'id' });
+        d.createObjectStore('customers', { keyPath:'id' });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  const localAll = store => new Promise((resolve, reject) => { const r = db.transaction(store).objectStore(store).getAll(); r.onsuccess = () => resolve(r.result || []); r.onerror = () => reject(r.error); });
+  const putLocal = (store, value) => new Promise((resolve, reject) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).put(value); tx.oncomplete = () => resolve(value); tx.onerror = () => reject(tx.error); });
+  const delLocal = (store, key) => new Promise((resolve, reject) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).delete(key); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+  async function all(store) {
+    if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user){
+      try{
+        const records=await window.KiranaCloud.list(store);
+        await Promise.all(records.map(record=>putLocal(store,record)));
+        return records;
+      }catch(error){console.warn('Cloud read unavailable; using local cache.',error);}
+    }
+    return localAll(store);
+  }
+  async function put(store, value) {
+    await putLocal(store,value);
+    if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user)window.KiranaCloud.write(store,value).catch(error=>{console.warn('Cloud write is queued or unavailable.',error);$('#online-label').textContent='Sync pending';});
+    return value;
+  }
+  async function del(store, key) {
+    await delLocal(store,key);
+    if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user)window.KiranaCloud.delete(store,key).catch(error=>{console.warn('Cloud delete is queued or unavailable.',error);$('#online-label').textContent='Sync pending';});
+  }
+  function makeBill(data) {
+    if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user){
+      const cloudBill=Object.assign({},data,{id:uid()});
+      return window.KiranaCloud.createBill(cloudBill).then(saved=>new Promise((resolve,reject)=>{
+        const tx=db.transaction(['counters','bills'],'readwrite');
+        tx.objectStore('counters').put({id:saved.businessId+':'+saved.financialYear,businessId:saved.businessId,financialYear:saved.financialYear,lastNumber:saved.sequence});
+        tx.objectStore('bills').put(saved);
+        tx.oncomplete=()=>resolve(saved);tx.onerror=()=>reject(tx.error);
+      }));
+    }
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['counters', 'bills'], 'readwrite'), counters = tx.objectStore('counters');
+      const year = fy(data.date), counterId = data.businessId + ':' + year, req = counters.get(counterId);
+      let saved;
+      req.onsuccess = () => {
+        const seq = (req.result && req.result.lastNumber || 0) + 1, b = biz(data.businessId);
+        saved = Object.assign({}, data, { id:uid(), financialYear:year, sequence:seq, billNumber:b.prefix + '/' + year + '/' + String(seq).padStart(4, '0'), createdAt:new Date().toISOString() });
+        counters.put({ id:counterId, businessId:data.businessId, financialYear:year, lastNumber:seq });
+        tx.objectStore('bills').add(saved);
+      };
+      tx.oncomplete = () => resolve(saved); tx.onerror = () => reject(tx.error);
+    });
+  }
+  function toast(message, error) { const n = document.createElement('div'); n.className = 'toast' + (error ? ' error' : ''); n.textContent = message; $('#toast-region').append(n); setTimeout(() => n.remove(), 3200); }
+  function head(kicker, title, subtitle, action) { return '<div class="page-head"><div><div class="eyebrow">' + kicker + '</div><h1 class="page-title">' + title + '</h1><p class="page-subtitle">' + subtitle + '</p></div>' + (action || '') + '</div>'; }
+  function tabs() { return '<div class="business-tabs"><button class="business-tab ' + (form === 'all' ? 'active' : '') + '" data-business="all"><span class="tab-dot"></span>All forms</button>' + BIZ.map(b => '<button class="business-tab ' + (form === b.id ? 'active' : '') + '" data-business="' + b.id + '"><span class="tab-dot"></span>' + esc(b.name) + '</button>').join('') + '</div>'; }
+  function stat(label, value, note, icon) { return '<div class="stat-card"><div class="stat-top"><span>' + label + '</span><span class="stat-icon">' + icon + '</span></div><div class="stat-number">' + value + '</div><div class="stat-note">' + note + '</div></div>'; }
+  function chip(key) { const b = biz(key); return '<span class="business-chip"><i style="background:' + b.color + '"></i>' + esc(b.name) + '</span>'; }
+  function empty(title, text, button) { return '<div class="empty-state"><div class="empty-mark">＋</div><b>' + title + '</b><p>' + text + '</p>' + (button || '') + '</div>'; }
+  function billTable(items, showForm) {
+    if (!items.length) return empty('No bills yet', 'Create your first dispatch bill. Each form gets its own number sequence for every financial year.', '<button class="button button-primary" data-action="new-bill">＋ Create first bill</button>');
+    return '<div class="table-wrap"><table class="data-table"><thead><tr><th>BILL NUMBER</th>' + (showForm ? '<th>FORM</th>' : '') + '<th>CUSTOMER</th><th>DATE</th><th>ITEMS</th><th>QUANTITY</th><th></th></tr></thead><tbody>' + items.map(b => {
+      const q = b.items.reduce((s, i) => s + Number(i.quantity || 0), 0);
+      return '<tr><td class="strong-cell">' + esc(b.billNumber) + '</td>' + (showForm ? '<td>' + chip(b.businessId) + '</td>' : '') + '<td>' + esc(b.customerName) + '</td><td class="muted-cell">' + dateLabel(b.date) + '</td><td>' + b.items.length + '</td><td>' + number(q) + '</td><td><button class="icon-button" data-action="view-bill" data-id="' + esc(b.id) + '" title="View record">↗</button></td></tr>';
+    }).join('') + '</tbody></table></div>';
+  }
+  async function renderDashboard() {
+    const results = await Promise.all([all('bills'), all('products'), all('customers')]), bills = results[0], products = results[1], customers = results[2];
+    const chosen = bills.filter(b => form === 'all' || b.businessId === form), year = fy(today()), current = chosen.filter(b => b.financialYear === year);
+    const itemLines = current.reduce((s, b) => s + b.items.length, 0);
+    const p = products.filter(x => form === 'all' || x.businessId === form), c = customers.filter(x => form === 'all' || x.businessId === form);
+    const recent = chosen.sort((a,b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)).slice(0,6);
+    $('#page-content').innerHTML = head('GOOD DAY', form === 'all' ? 'Dispatch overview' : esc(biz(form).name), 'Track bills and quantities for FY ' + year + '.', '<div class="head-actions"><button class="button button-primary" data-action="new-bill">＋ Create bill</button></div>') + tabs() +
+      '<section class="stats-grid">' + stat('Bills this financial year', current.length, 'Across FY ' + year, '▤') + stat('Items dispatched', itemLines, 'Bill line items this FY', '↗') + stat('Products in catalog', p.length, 'Across selected forms', '◫') + stat('Saved customers', c.length, 'Across selected forms', '♙') + '</section>' +
+      '<div class="quick-grid">' + BIZ.map(b => '<article class="form-card"><span class="form-code">' + b.prefix + '</span><h3>' + esc(b.name) + '</h3><p>Start a dispatch bill. Numbering is separate for this form.</p><button class="button button-light button-small" data-action="new-bill" data-form="' + b.id + '">Create bill →</button></article>').join('') + '</div>' +
+      '<section class="panel activity-panel"><div class="panel-head"><div><div class="panel-title">Recent bills</div><div class="panel-caption">Latest dispatches</div></div><button class="button button-light button-small" data-action="goto-bills">View all bills →</button></div>' + billTable(recent, form === 'all') + '</section>';
+  }
+  async function renderBills() {
+    const bills = (await all('bills')).sort((a,b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+    const visible = bills.filter(b => {
+      const q = search.toLowerCase(), match = !q || [b.billNumber,b.customerName,...b.items.map(i => i.productName)].some(v => String(v).toLowerCase().includes(q));
+      return (form === 'all' || b.businessId === form) && match && (period === 'all' || (period === 'fy' ? b.financialYear === fy(today()) : b.date.startsWith(period)));
+    });
+    $('#page-content').innerHTML = head('DISPATCH RECORDS','Dispatch records','Find and review entries without paging through the bill book.','<div class="head-actions"><button class="button button-primary" data-action="new-bill">＋ Add record</button></div>') + tabs() +
+      '<section class="panel"><div class="toolbar" style="padding:15px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="bill-search" class="input" placeholder="Search bill, customer, product…" value="' + esc(search) + '"></div><span class="tag gray">' + visible.length + ' bills</span></div><div class="toolbar-right"><select id="bill-period" class="select" style="width:auto"><option value="all">All dates</option><option value="fy" ' + (period === 'fy' ? 'selected' : '') + '>Current FY</option></select></div></div>' + billTable(visible, form === 'all') + '</section>';
+  }
+  async function renderCatalog() {
+    const res = await Promise.all([all('products'),all('customers')]), products=res[0], customers=res[1], list=catalog==='products'?products:customers;
+    const shown = list.filter(r => (form==='all'||r.businessId===form) && (!catalogSearch || (r.name+' '+(r.note||'')).toLowerCase().includes(catalogSearch.toLowerCase())));
+    const label = catalog==='products'?'product':'customer', records = shown.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>'+(catalog==='products'?'PRODUCT':'CUSTOMER')+'</th><th>FORM</th><th>'+(catalog==='products'?'UNIT':'CONTACT / NOTE')+'</th><th>ADDED</th><th></th></tr></thead><tbody>'+shown.map(r => '<tr><td><div class="row-title"><span class="avatar">'+esc(r.name.slice(0,1).toUpperCase())+'</span><span class="strong-cell">'+esc(r.name)+'</span>'+(r.isSample?'<span class="tag gray">SAMPLE</span>':'')+'</div></td><td>'+chip(r.businessId)+'</td><td class="muted-cell">'+esc(catalog==='products'?(r.unit||'—'):(r.note||'—'))+'</td><td class="muted-cell">'+dateLabel(r.createdAt.slice(0,10))+'</td><td><button class="icon-button" data-action="edit-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Edit">✎</button><button class="icon-button" data-action="delete-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Delete">⌫</button></td></tr>').join('')+'</tbody></table></div>' : empty('No '+catalog+' yet','Add '+(catalog==='products'?'products dispatched from this form':'the people who receive products from this form')+'. They will be searchable on bills.','<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>');
+    $('#page-content').innerHTML = head('MASTER LISTS','Products & customers','Each form has its own searchable lists.','<div class="head-actions"><button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button></div>')+tabs()+
+      '<div class="tabs-underline"><button class="underline-tab '+(catalog==='products'?'active':'')+'" data-catalog-tab="products">Products ('+products.filter(r=>form==='all'||r.businessId===form).length+')</button><button class="underline-tab '+(catalog==='customers'?'active':'')+'" data-catalog-tab="customers">Customers ('+customers.filter(r=>form==='all'||r.businessId===form).length+')</button></div><section class="panel" style="margin-top:15px"><div class="toolbar" style="padding:14px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="catalog-search" class="input" placeholder="Search '+catalog+'…" value="'+esc(catalogSearch)+'"></div><span class="tag gray">'+shown.length+' records</span></div></div>'+records+'</section>';
+  }
+  function startDate(scope) {
+    const n=new Date();
+    if(scope==='fy'){const y=n.getMonth()>=3?n.getFullYear():n.getFullYear()-1;return new Date(y,3,1);}
+    return new Date(n.getFullYear(),n.getMonth()-Number(scope)+1,1);
+  }
+  async function renderAnalytics() {
+    const bills=await all('bills'), start=startDate(analyticsPeriod), list=bills.filter(b=>(form==='all'||b.businessId===form)&&new Date(b.date+'T12:00:00')>=start), p=new Map(), c=new Map();
+    let lines=0;
+    list.forEach(b=>{c.set(b.customerName,(c.get(b.customerName)||0)+1);b.items.forEach(i=>{lines++;const key=i.productName+'|'+i.unit,v=p.get(key)||{name:i.productName,qty:0,unit:i.unit};v.qty+=Number(i.quantity)||0;p.set(key,v);});});
+    const top=[...p.values()].sort((a,b)=>b.qty-a.qty), max=Math.max(1,...top.map(x=>x.qty));
+    const productRows=top.length?top.map(x=>{const title=x.name+' ('+x.unit+')';return '<div class="bar-row"><span title="'+esc(title)+'">'+esc(title.length>19?title.slice(0,18)+'…':title)+'</span><div class="bar-track"><div class="bar-fill" style="width:'+Math.max(3,x.qty/max*100)+'%"></div></div><b>'+number(x.qty)+'</b></div>';}).join(''):'<div class="empty-inline">Bills will build this report as you go.</div>';
+    const topC=[...c.entries()].sort((a,b)=>b[1]-a[1]), customerRows=topC.length?'<div class="metric-list">'+topC.map((x,i)=>'<div class="metric-row"><span class="row-title"><span class="avatar">'+(i+1)+'</span>'+esc(x[0])+'</span><span class="metric-value">'+x[1]+' bills</span></div>').join('')+'</div>':'<div class="empty-inline">Customer totals appear after bills are created.</div>';
+    $('#page-content').innerHTML=head('BUSINESS INSIGHTS','Dispatch analytics','Product and customer activity, based on quantities and bill counts.','<div class="head-actions"><button class="button button-light" data-action="export-analytics">↓ Export CSV</button></div>')+tabs()+
+      '<section class="stats-grid">'+stat('Bills in period',list.length,'Dispatches recorded','▤')+stat('Item lines',lines,'Line items across bills','◫')+stat('Product types',new Set([...p.values()].map(x=>x.name)).size,'Distinct products dispatched','↗')+stat('Customers served',c.size,'Unique customer names','♙')+'</section>'+
+      '<div class="toolbar" style="justify-content:flex-end;margin:0 0 13px"><div class="toolbar-right"><span class="field-label" style="margin:0">PERIOD</span><select id="analytics-period" class="select" style="width:auto"><option value="fy" '+(analyticsPeriod==='fy'?'selected':'')+'>Current financial year</option><option value="3" '+(analyticsPeriod==='3'?'selected':'')+'>Last 3 months</option><option value="6" '+(analyticsPeriod==='6'?'selected':'')+'>Last 6 months</option><option value="12" '+(analyticsPeriod==='12'?'selected':'')+'>Last 12 months</option></select></div></div>'+
+      '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Products by quantity</div><div class="panel-caption">Most dispatched in this period</div></div></div>'+productRows+'</section><section class="panel"><div class="panel-head"><div><div class="panel-title">Frequent customers</div><div class="panel-caption">Ranked by number of bills</div></div></div>'+customerRows+'</section></div>';
+  }
+  async function renderBackup() {
+    const res=await Promise.all([all('bills'),all('products'),all('customers')]), last=localStorage.getItem('kiranaDeskLastBackup');
+    $('#page-content').innerHTML=head('DATA SAFETY','Backup & restore','Create a portable copy of the records on this computer.')+
+      '<div class="notice"><strong>How your data is saved:</strong> your bills, customers, and products are stored in this browser on this computer. They work offline. Export backups to protect against device loss or cleared browser data.</div>'+
+      '<section class="stats-grid" style="margin-top:16px">'+stat('Bills',res[0].length,'On this computer','▤')+stat('Products',res[1].length,'On this computer','◫')+stat('Customers',res[2].length,'On this computer','♙')+stat('Last backup',last?dateLabel(last.slice(0,10)):'Not yet',last?new Date(last).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'Export a copy now','↥')+'</section>'+
+      '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Create a backup</div><div class="panel-caption">All forms, lists, bills, and bill counters in one file.</div></div></div><div style="padding:19px"><button class="button button-primary" data-action="export-backup">↓ Download backup file</button><p class="field-hint" style="line-height:1.6">Save the file somewhere private and separate. Create a fresh copy after each day’s work.</p></div></section><section class="panel"><div class="panel-head"><div><div class="panel-title">Restore a backup</div><div class="panel-caption">Replace local records with a saved backup.</div></div></div><div style="padding:19px"><label class="button button-light" for="backup-file">Choose backup file</label><input id="backup-file" type="file" accept="application/json,.json" hidden><p class="field-hint" style="line-height:1.6">Restore replaces current local data. Export it first if you want to keep a copy.</p></div></section></div>'+
+      '<div class="backup-steps"><div class="backup-step"><span class="step-number">1</span><b>Export after billing</b><p>Download a fresh copy after each work session.</p></div><div class="backup-step"><span class="step-number">2</span><b>Keep another copy</b><p>Move the file to a separate drive or your brother’s computer.</p></div><div class="backup-step"><span class="step-number">3</span><b>Restore when needed</b><p>Choose the file on the computer where you want the records.</p></div></div>';
+  }
+  async function render() {
+    $('#page-crumb').textContent=names[page]; $$('.main-nav [data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page)); $('#bill-nav-count').textContent=String((await all('bills')).length);
+    if(page==='dashboard')return renderDashboard(); if(page==='bills')return renderBills(); if(page==='catalog')return renderCatalog(); if(page==='analytics')return renderAnalytics(); if(page==='backup')return renderBackup();
+  }
+  function go(p){page=p;render().catch(e=>{console.error(e);toast('Could not load this page.',true);});}
+  function billDialog(data) {
+    Promise.all([all('products'),all('customers')]).then(res=>{
+      const products=res[0].filter(x=>x.businessId===data.businessId), customers=res[1].filter(x=>x.businessId===data.businessId), readonly=!!data.billNumber;
+      const rows=data.items.map(i=>'<div class="item-row"><input class="input" list="product-list" data-field="productName" value="'+esc(i.productName)+'" placeholder="Search product" required '+(readonly?'readonly':'')+'><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity)+'" placeholder="0" required '+(readonly?'readonly':'')+'><input class="input" list="unit-list" data-field="unit" value="'+esc(i.unit)+'" placeholder="e.g. bag" required '+(readonly?'readonly':'')+'>'+(readonly?'':'<button class="icon-button remove-item" type="button" data-action="remove-item">×</button>')+'</div>').join('');
+      $('#bill-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">'+(readonly?'DISPATCH BILL':'NEW DISPATCH')+'</div><h2>'+(readonly?esc(data.billNumber):'Create a bill')+'</h2><p>'+esc(biz(data.businessId).name)+' · '+(readonly?'FY '+esc(data.financialYear):'Number assigned when saved for FY '+fy(data.date))+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div>'+
+       '<form id="bill-form"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><select id="bill-business" name="businessId" class="select" '+(readonly?'disabled':'')+'>'+BIZ.map(b=>'<option value="'+b.id+'" '+(data.businessId===b.id?'selected':'')+'>'+esc(b.name)+'</option>').join('')+'</select></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(readonly?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" name="customerName" list="customer-list" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(readonly?'readonly':'')+'><datalist id="customer-list">'+customers.map(x=>'<option value="'+esc(x.name)+'">').join('')+'</datalist></div></div>'+
+       '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(readonly?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table"><div class="items-table-head"><div>PRODUCT</div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div><datalist id="product-list">'+products.map(x=>'<option value="'+esc(x.name)+'">').join('')+'</datalist><datalist id="unit-list">'+['bag','kg','g','litre','box','piece','quintal','tonne','packet','dozen'].map(x=>'<option value="'+x+'">').join('')+'</datalist></div>'+
+       '<div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(readonly?'readonly':'')+'></div><div class="modal-section helper-box">'+(readonly?'Saved dispatch record.':'Bill number is assigned on save. Sequences are separate by form and restart each Indian financial year (1 April). No prices or GST.')+'</div></div>'+
+       '<div class="modal-foot">'+(readonly?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete record</button>':'<span class="field-hint">Product · quantity · unit</span>')+'<div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(readonly?'':'<button class="button button-primary" type="submit">Save record</button>')+'</div></div></form>';
+    }).catch(e=>{console.error(e);toast('Could not load your catalog.',true);});
+  }
+  function newBill(key) { const businessId=key||(form==='all'?'sampurn':form); billDialog({businessId,date:today(),customerName:'',items:[{productName:'',quantity:'',unit:''}],notes:''}); $('#bill-dialog').showModal(); }
+  function recordDialog(kind, key, existing) {
+    const product=kind==='products', bizId=key||(existing&&existing.businessId)||(form==='all'?'sampurn':form);
+    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>This record belongs to the selected form only.</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid"><div class="full"><label class="field-label">FORM</label><select class="select" name="businessId">'+BIZ.map(b=>'<option value="'+b.id+'" '+(b.id===bizId?'selected':'')+'>'+esc(b.name)+'</option>').join('')+'</select></div><div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
+    $('#record-dialog').showModal();
+  }
+  async function backup() {
+    const r=await Promise.all([all('bills'),all('counters'),all('products'),all('customers')]), data={app:'Kirana Desk',schemaVersion:1,exportedAt:new Date().toISOString(),bills:r[0],counters:r[1],products:r[2],customers:r[3]};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})), a=document.createElement('a'); a.href=url; a.download='kirana-desk-backup-'+today()+'.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+    localStorage.setItem('kiranaDeskLastBackup',new Date().toISOString()); toast('Backup downloaded. Save another copy on a separate device.'); if(page==='backup')render();
+  }
+  async function exportAnalytics() {
+    const start=startDate(analyticsPeriod), bills=(await all('bills')).filter(b=>(form==='all'||b.businessId===form)&&new Date(b.date+'T12:00:00')>=start);
+    const quote=value=>'"'+String(value==null?'':value).replace(/"/g,'""')+'"';
+    const rows=[['Bill number','Financial year','Date','Form','Customer','Product','Quantity','Unit','Note']];
+    bills.forEach(b=>b.items.forEach(i=>rows.push([b.billNumber,b.financialYear,b.date,biz(b.businessId).name,b.customerName,i.productName,i.quantity,i.unit,b.notes||''])));
+    const csv='\uFEFF'+rows.map(row=>row.map(quote).join(',')).join('\r\n'), url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})), a=document.createElement('a');
+    a.href=url;a.download='kirana-dispatch-report-'+today()+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast('CSV report downloaded. Open it in Excel or another spreadsheet app.');
+  }
+  async function restore(file) {
+    const data=JSON.parse(await file.text());
+    if(data.app!=='Kirana Desk'||data.schemaVersion!==1||!['bills','counters','products','customers'].every(k=>Array.isArray(data[k])))throw new Error('This is not a valid Kirana Desk backup.');
+    if(!confirm('Restore '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers? Current records on this computer will be replaced.'))return;
+    await new Promise((resolve,reject)=>{const tx=db.transaction(['bills','counters','products','customers'],'readwrite');['bills','counters','products','customers'].forEach(k=>{const s=tx.objectStore(k);s.clear();data[k].forEach(x=>s.put(x));});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
+    localStorage.setItem('kiranaDeskLastBackup',data.exportedAt||new Date().toISOString()); localStorage.setItem('kiranaDeskSampleSeeded','yes'); toast('Backup restored.'); render();
+  }
+  async function seedSamples() {
+    if(localStorage.getItem('kiranaDeskSampleSeeded'))return;
+    const existing=await Promise.all([all('bills'),all('products'),all('customers')]);
+    if(existing.some(records=>records.length)){localStorage.setItem('kiranaDeskSampleSeeded','yes');return;}
+    const products={
+      sampurn:[['Wheat Flour','kg'],['Rice','kg'],['Toor Dal','kg'],['Cooking Oil','litre']],
+      surya:[['Basmati Rice','kg'],['Sugar','kg'],['Tea','kg'],['Detergent Powder','kg']],
+      dhanraj:[['Maida','kg'],['Besan','kg'],['Poha','kg'],['Groundnut Oil','litre']]
+    };
+    const customers={
+      sampurn:['Sharma General Store','Shree Ganesh Kirana','City Provision Store'],
+      surya:['Mehta Super Mart','Patel Daily Needs','New Market Stores'],
+      dhanraj:['Jain Food Corner','Khandelwal Kirana','Maa Ambe Stores']
+    }, createdAt=new Date().toISOString(), writes=[];
+    Object.entries(products).forEach(([businessId,items])=>items.forEach(([name,unit])=>writes.push(put('products',{id:uid(),businessId,name,unit,createdAt,isSample:true}))));
+    Object.entries(customers).forEach(([businessId,items])=>items.forEach(name=>writes.push(put('customers',{id:uid(),businessId,name,note:'',createdAt,isSample:true}))));
+    await Promise.all(writes);localStorage.setItem('kiranaDeskSampleSeeded','yes');
+  }
+  async function replaceLocal(store, records) {
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(store,'readwrite'), objectStore=tx.objectStore(store);
+      objectStore.clear();records.forEach(record=>objectStore.put(record));
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+  }
+  async function reconcileCloud() {
+    const stores=['bills','counters','products','customers'];
+    const local=await Promise.all(stores.map(localAll)), remote=await Promise.all(stores.map(window.KiranaCloud.list));
+    const localCount=local.reduce((sum,rows)=>sum+rows.length,0), remoteCount=remote.reduce((sum,rows)=>sum+rows.length,0);
+    if(remoteCount===0&&localCount>0){
+      stores.forEach((store,index)=>local[index].forEach(record=>window.KiranaCloud.write(store,record).catch(console.warn)));
+      return;
+    }
+    await Promise.all(stores.map((store,index)=>replaceLocal(store,remote[index])));
+  }
+  document.addEventListener('click', e=>{
+    const p=e.target.closest('[data-page]'); if(p){page=p.dataset.page;render();return;}
+    const t=e.target.closest('[data-business]'); if(t){form=t.dataset.business;render();return;}
+    const ct=e.target.closest('[data-catalog-tab]');if(ct){catalog=ct.dataset.catalogTab;catalogSearch='';render();return;}
+    const a=e.target.closest('[data-action]');if(!a)return;
+    const x=a.dataset.action;
+    if(x==='new-bill')newBill(a.dataset.form);
+    if(x==='goto-bills'){page='bills';render();}
+    if(x==='close-dialog')a.closest('dialog').close();
+    if(x==='add-record')recordDialog(a.dataset.kind);
+    if(x==='edit-record'){const store=a.dataset.kind;all(store).then(items=>{const item=items.find(r=>r.id===a.dataset.id);if(item)recordDialog(store,item.businessId,item);});}
+    if(x==='export-backup')backup().catch(()=>toast('Could not create backup.',true));
+    if(x==='export-analytics')exportAnalytics().catch(()=>toast('Could not export this report.',true));
+    if(x==='add-item')$('#bill-items').insertAdjacentHTML('beforeend','<div class="item-row"><input class="input" list="product-list" data-field="productName" placeholder="Search product" required><input class="input" type="number" min="0.001" step="any" data-field="quantity" placeholder="0" required><input class="input" list="unit-list" data-field="unit" placeholder="e.g. bag" required><button class="icon-button" type="button" data-action="remove-item">×</button></div>');
+    if(x==='remove-item'){const rows=$$('.item-row',$('#bill-items'));if(rows.length>1)a.closest('.item-row').remove();else toast('A bill needs one item.');}
+    if(x==='view-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){billDialog(b);$('#bill-dialog').showModal();}});
+    if(x==='delete-bill'&&confirm('Delete this bill? Its number remains reserved and will never be reused.'))del('bills',a.dataset.id).then(()=>{$('#bill-dialog').close();toast('Bill deleted. Number remains reserved.');render();});
+    if(x==='delete-record'&&confirm('Delete this catalog entry? Existing bills will not change.'))del(a.dataset.kind,a.dataset.id).then(()=>{toast('Catalog entry removed.');render();});
+  });
+  document.addEventListener('input',e=>{
+    if(e.target.id==='bill-search'){search=e.target.value;const n=e.target.value.length;renderBills().then(()=>{const field=$('#bill-search');if(field){field.focus();field.setSelectionRange(n,n);}});}
+    if(e.target.id==='catalog-search'){catalogSearch=e.target.value;const n=e.target.value.length;renderCatalog().then(()=>{const field=$('#catalog-search');if(field){field.focus();field.setSelectionRange(n,n);}});}
+  });
+  document.addEventListener('change',e=>{
+    if(e.target.id==='bill-period'){period=e.target.value;renderBills();}
+    if(e.target.id==='analytics-period'){analyticsPeriod=e.target.value;renderAnalytics();}
+    if(e.target.id==='bill-business'){const key=e.target.value;billDialog({businessId:key,date:$('#bill-date').value,customerName:$('#bill-customer').value,items:$$('.item-row',$('#bill-items')).map(r=>Object.fromEntries($$('[data-field]',r).map(i=>[i.dataset.field,i.value]))),notes:$('#bill-notes').value});}
+    if(e.target.dataset.field==='productName'){const name=e.target.value.trim().toLowerCase(), row=e.target.closest('.item-row'), selectedBusiness=$('#bill-business')?.value;all('products').then(items=>{const item=items.find(p=>p.businessId===selectedBusiness&&p.name.toLowerCase()===name);const unit=$('[data-field="unit"]',row);if(item&&item.unit&&unit&&!unit.value)unit.value=item.unit;});}
+    if(e.target.id==='backup-file'&&e.target.files[0])restore(e.target.files[0]).catch(err=>{console.error(err);toast(err.message||'Could not restore backup.',true);e.target.value='';});
+  });
+  document.addEventListener('submit',async e=>{
+    if(e.target.id==='record-form'){
+      e.preventDefault();const f=new FormData(e.target), kind=f.get('kind'), oldId=f.get('recordId'), prior=oldId?(await all(kind)).find(x=>x.id===oldId):null, r={id:oldId||uid(),businessId:f.get('businessId'),name:String(f.get('name')).trim(),createdAt:prior?prior.createdAt:new Date().toISOString()};
+      if(prior&&prior.isSample&&prior.name===r.name)r.isSample=true;
+      if(kind==='products'){r.unit=String(f.get('unit')||'').trim();await put('products',r);}else{r.note=String(f.get('note')||'').trim();await put('customers',r);}
+      $('#record-dialog').close();toast('Saved to this form.');render();
+    }
+    if(e.target.id==='bill-form'){
+      e.preventDefault();const rows=$$('.item-row',e.target), items=rows.map(r=>({productName:$('[data-field="productName"]',r).value.trim(),quantity:Number($('[data-field="quantity"]',r).value),unit:$('[data-field="unit"]',r).value.trim()}));
+      const data={businessId:$('#bill-business').value,date:$('#bill-date').value,customerName:$('#bill-customer').value.trim(),notes:$('#bill-notes').value.trim(),items};
+      if(!data.customerName||!data.date||items.some(i=>!i.productName||!(i.quantity>0)||!i.unit)){toast('Fill in the customer, date, product, quantity, and unit.',true);return;}
+      try{const saved=await makeBill(data);$('#bill-dialog').close();toast(saved.billNumber+' saved.');billDialog(saved);$('#bill-dialog').showModal();render();}catch(err){console.error(err);toast(window.KiranaCloud&&window.KiranaCloud.configured?'Could not save. Check internet; shared bill numbering needs a connection.':'Could not save bill.',true);}
+    }
+  });
+  $('#new-bill-top').addEventListener('click',()=>newBill());
+  $('#sign-in-form').addEventListener('submit',async e=>{
+    e.preventDefault();const data=new FormData(e.currentTarget), error=$('#auth-error');error.textContent='';
+    try{await window.KiranaCloud.signIn(String(data.get('email')).trim(),String(data.get('password')));}
+    catch(err){console.error(err);error.textContent=err.code==='auth/invalid-credential'?'Email or password is incorrect.':'Could not sign in. Check your connection and account details.';}
+  });
+  $('#sign-out').addEventListener('click',()=>window.KiranaCloud.signOut().catch(()=>toast('Could not sign out.',true)));
+  window.addEventListener('online',()=>$('#online-label').textContent='Offline ready');
+  window.addEventListener('offline',()=>$('#online-label').textContent='Working offline');
+  async function start(){
+    try{
+      db=await openDb();
+      const firebaseExpected=Boolean(firebaseConfig&&firebaseConfig.apiKey&&!firebaseConfig.apiKey.startsWith('REPLACE_'));
+      if(firebaseExpected&&!(window.KiranaCloud&&window.KiranaCloud.configured)){
+        $('#auth-gate').hidden=false;$('#sign-in-form').hidden=true;$('#auth-error').textContent='Cloud connection did not load. Connect to the internet and reload this page.';return;
+      }
+      if(window.KiranaCloud&&window.KiranaCloud.configured){
+        $('#auth-gate').hidden=false;
+        let subscriptions=[];
+        window.KiranaCloud.onAuthChange(async user=>{
+          subscriptions.forEach(stop=>stop());subscriptions=[];
+          if(!user){$('#auth-gate').hidden=false;$('#sign-out').hidden=true;return;}
+          $('#auth-gate').hidden=true;$('#sign-out').hidden=false;$('#online-label').textContent='Shared workspace';
+          try{
+            await reconcileCloud();await seedSamples();
+            subscriptions=window.KiranaCloud.listen(async(store,records)=>{
+              await replaceLocal(store,records);
+              if(document.visibilityState==='visible')render().catch(console.warn);
+            },error=>{console.warn('Cloud listener unavailable.',error);$('#online-label').textContent='Sync pending';});
+            await render();
+          }catch(error){console.error(error);toast('Could not load shared records. Check the Firebase setup.',true);}
+        });
+      }else{await seedSamples();$('#online-label').textContent=navigator.onLine?'Local only':'Working offline';await render();}
+      if('serviceWorker'in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').catch(console.info);
+    }
+    catch(err){console.error(err);$('#page-content').innerHTML=empty('Local storage unavailable','Open the app through a local web server or secure website. Browser storage is unavailable in this page context.');}
+  }
+  start();
+})();
