@@ -220,8 +220,9 @@ import { firebaseConfig } from './firebase-config.js';
        '<form id="bill-form"><input type="hidden" name="billId" value="'+(isSaved?esc(data.id):'')+'"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><input type="hidden" id="bill-business" name="businessId" value="'+esc(data.businessId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(data.businessId===b.id?' active':'')+'" data-action="pick-business" data-id="'+b.id+'" '+(lockCore?'disabled':'')+'>'+esc(b.name)+'</button>').join('')+'</div></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(lockCore?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" name="customerName" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(lockFields?'readonly':'')+'></div></div>'+
        '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(lockFields?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table"><div class="items-table-head"><div>PRODUCT</div><div>PRICE <span style="font-weight:400">(optional)</span></div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div></div>'+
        (isSaved&&total>0?'<div class="modal-section total-line"><span>Amount total (priced lines)</span><b>₹'+number(Math.round(total*100)/100)+'</b></div>':'')+
-       '<div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, or note. Bill number and date stay fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price on each line is optional. No GST.')+'</div></div>'+
+       '<div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#97a29b">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div><div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, or note. Bill number and date stay fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price on each line is optional. No GST.')+'</div></div>'+
        '<div class="modal-foot">'+(isSaved&&!editing?'<button class="button button-light" type="button" data-action="print-bill" data-id="'+esc(data.id)+'">⎙ Print</button>':'<span class="field-hint">'+(editing?'Bill number stays the same':'Product · price (optional) · quantity · unit')+'</span>')+'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(editing?'<button class="button button-primary" type="submit">Save changes</button>':(!isSaved?'<button class="button button-primary" type="submit">Save record</button>':(can('bill')?'<button class="button button-primary" type="button" data-action="edit-bill" data-id="'+esc(data.id)+'">Edit</button>':'')))+(isSaved&&!editing&&can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete</button>':'')+'</div></div></form>';
+      renderPhotoArea(data.photo||'', !lockFields);
     }).catch(e=>{console.error(e);toast('Could not load your catalog.',true);});
   }
   function newBill(key) { const businessId=key||(form==='all'?'sampurn':form); billDialog({businessId,date:today(),customerName:'',items:[{productName:'',quantity:'',unit:''}],notes:''}); $('#bill-dialog').showModal(); }
@@ -299,6 +300,37 @@ import { firebaseConfig } from './firebase-config.js';
     frame.srcdoc=html;
     frame.onload=()=>{const w=frame.contentWindow;setTimeout(()=>{try{if(!w.print)throw 0;w.focus();w.print();}catch(e){const n=window.open('','_blank');if(n){n.document.write(html);n.document.close();}}setTimeout(()=>frame.remove(),60000);},250);};
   }
+  function compressImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image(), url = URL.createObjectURL(file);
+      img.onload = () => {
+        try {
+          const max = 1400; let w = img.width, h = img.height;
+          if (w > max || h > max) { const k = Math.min(max / w, max / h); w = Math.round(w * k); h = Math.round(h * k); }
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          let q = 0.72, out = c.toDataURL('image/jpeg', q);
+          while (out.length > 190000 && q > 0.35) { q -= 0.07; out = c.toDataURL('image/jpeg', q); }
+          URL.revokeObjectURL(url); resolve(out);
+        } catch (err) { URL.revokeObjectURL(url); reject(err); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+      img.src = url;
+    });
+  }
+  function renderPhotoArea(photo, editable) {
+    const area = $('#bill-photo-area'); if (!area) return;
+    area.innerHTML = photo
+      ? (editable
+        ? '<div class="photo-chip"><img src="' + photo + '" alt=""><button type="button" class="icon-button" data-action="remove-photo" title="Remove">✕</button><label class="button button-light button-small" for="bill-photo-input">Replace</label></div>'
+        : '<img class="photo-thumb" src="' + photo + '" data-action="view-photo" data-id="' + esc(area.dataset.billId || '') + '" alt="Bill photo">')
+      : (editable
+        ? '<label class="button button-light button-small" for="bill-photo-input">＋ Attach photo</label>'
+        : '<span class="field-hint">No photo attached</span>');
+  }
+  function photoView(src, id) {
+    $('#bill-dialog').innerHTML = '<div class="modal-head"><div><div class="eyebrow">ATTACHMENT</div><h2>Bill photo</h2></div><button class="icon-button" data-action="close-dialog">✕</button></div><div class="modal-body"><div class="photo-view"><img src="' + src + '" alt="Bill photo"></div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px">' + (id ? '<button class="button button-light" type="button" data-action="back-to-bill" data-id="' + esc(id) + '">← Back</button>' : '') + '<button class="button button-primary" type="button" data-action="close-dialog">Close</button></div></div>';
+  }
   let sugBox=null;
   function closeSug(){ if(sugBox){sugBox.remove();sugBox=null;} }
   function openSug(input, values){
@@ -352,6 +384,9 @@ import { firebaseConfig } from './firebase-config.js';
     if(x==='pick-business'){const inp=$('#bill-business');if(inp&&!inp.disabled){inp.value=a.dataset.id;$$('.pick-chip',a.closest('.chip-row')).forEach(c=>c.classList.toggle('active',c===a));inp.dispatchEvent(new Event('change',{bubbles:true}));}}
     if(x==='pick-record-business'){const inp=a.closest('form').querySelector('[name="businessId"]');if(inp){inp.value=a.dataset.id;$$('.pick-chip',a.closest('.chip-row')).forEach(c=>c.classList.toggle('active',c===a));}}
     if(x==='edit-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){$('#bill-dialog').close();billDialog(b,true);$('#bill-dialog').showModal();}});
+    if(x==='view-photo'){const local=$('#bill-photo-value'),src2=local?local.value:'';if(src2){photoView(src2,a.dataset.id||'');}else if(a.dataset.id){all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b&&b.photo)photoView(b.photo,a.dataset.id);});}}
+    if(x==='back-to-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){billDialog(b);}});
+    if(x==='remove-photo'){const v=$('#bill-photo-value');if(v)v.value='';const area=$('#bill-photo-area');renderPhotoArea('',area&&area.dataset.editable!=='no');}
     if(x==='print-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b)printBill(b);});
     if(x==='delete-bill'&&confirm('Delete this bill? Its number remains reserved and will never be reused.'))del('bills',a.dataset.id).then(()=>{$('#bill-dialog').close();toast('Bill deleted. Number remains reserved.');render();});
     if(x==='delete-record'&&confirm('Delete this catalog entry? Existing bills will not change.'))del(a.dataset.kind,a.dataset.id).then(()=>{toast('Catalog entry removed.');render();});
@@ -367,8 +402,9 @@ import { firebaseConfig } from './firebase-config.js';
   document.addEventListener('change',e=>{
     if(e.target.id==='bill-period'){period=e.target.value;renderBills();}
     if(e.target.id==='analytics-period'){analyticsPeriod=e.target.value;renderAnalytics();}
-    if(e.target.id==='bill-business'){const key=e.target.value;billDialog({businessId:key,date:$('#bill-date').value,customerName:$('#bill-customer').value,items:$$('.item-row',$('#bill-items')).map(r=>Object.fromEntries($$('[data-field]',r).map(i=>[i.dataset.field,i.value]))),notes:$('#bill-notes').value});}
+    if(e.target.id==='bill-business'){const key=e.target.value;billDialog({businessId:key,date:$('#bill-date').value,customerName:$('#bill-customer').value,items:$$('.item-row',$('#bill-items')).map(r=>Object.fromEntries($$('[data-field]',r).map(i=>[i.dataset.field,i.value]))),notes:$('#bill-notes').value,photo:$('#bill-photo-value')?$('#bill-photo-value').value:''});}
     if(e.target.dataset.field==='productName'){const name=e.target.value.trim().toLowerCase(), row=e.target.closest('.item-row'), selectedBusiness=$('#bill-business')?.value;all('products').then(items=>{const item=items.find(p=>p.businessId===selectedBusiness&&p.name.toLowerCase()===name);const unit=$('[data-field="unit"]',row);if(item&&item.unit&&unit&&!unit.value)unit.value=item.unit;});}
+    if(e.target.id==='bill-photo-input'&&e.target.files[0]){const f=e.target.files[0],area=$('#bill-photo-area'),editable=area&&area.dataset.editable!=='no';toast('Preparing photo…');compressImage(f).then(d=>{const v=$('#bill-photo-value');if(v)v.value=d;renderPhotoArea(d,editable);toast('Photo attached.');}).catch(()=>toast('Could not attach that photo.',true));e.target.value='';}
     if(e.target.id==='backup-file'&&e.target.files[0])restore(e.target.files[0]).catch(err=>{console.error(err);toast(err.message||'Could not restore backup.',true);e.target.value='';});
   });
   document.addEventListener('submit',async e=>{
@@ -380,11 +416,11 @@ import { firebaseConfig } from './firebase-config.js';
     }
     if(e.target.id==='bill-form'){
       e.preventDefault();const rows=$$('.item-row',e.target), items=rows.map(r=>{const pr=$('[data-field="price"]',r);return {productName:$('[data-field="productName"]',r).value.trim(),quantity:Number($('[data-field="quantity"]',r).value),unit:$('[data-field="unit"]',r).value.trim(),price:pr&&pr.value!==''?Number(pr.value):null};});
-      const data={businessId:$('#bill-business').value,date:$('#bill-date').value,customerName:$('#bill-customer').value.trim(),notes:$('#bill-notes').value.trim(),items};
+      const photoVal=$('#bill-photo-value'),data={businessId:$('#bill-business').value,date:$('#bill-date').value,customerName:$('#bill-customer').value.trim(),notes:$('#bill-notes').value.trim(),items,photo:photoVal&&photoVal.value?photoVal.value:null};
       const idInput=e.target.querySelector('[name="billId"]'), billId=idInput?idInput.value:'';
       if(!data.customerName||!data.date||items.some(i=>!i.productName||!(i.quantity>0)||!i.unit)){toast('Fill in the customer, date, product, quantity, and unit.',true);return;}
       try{
-        if(billId){const existing=(await all('bills')).find(b=>b.id===billId);if(existing){existing.customerName=data.customerName;existing.notes=data.notes;existing.items=items;await put('bills',existing);$('#bill-dialog').close();toast(existing.billNumber+' updated.');render();return;}}
+        if(billId){const existing=(await all('bills')).find(b=>b.id===billId);if(existing){existing.customerName=data.customerName;existing.notes=data.notes;existing.items=items;existing.photo=data.photo;await put('bills',existing);$('#bill-dialog').close();toast(existing.billNumber+' updated.');render();return;}}
         const saved=await makeBill(data);$('#bill-dialog').close();toast(saved.billNumber+' saved.');billDialog(saved);$('#bill-dialog').showModal();render();
       }catch(err){console.error(err);toast(window.KiranaCloud&&window.KiranaCloud.configured?'Could not save. Check internet; shared bill numbering needs a connection.':'Could not save bill.',true);}
     }
