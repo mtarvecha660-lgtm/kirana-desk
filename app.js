@@ -289,11 +289,29 @@ import { firebaseConfig } from './firebase-config.js';
   }
   function printBill(b) {
     const bb=biz(b.businessId);
-    const money=v=>'₹'+new Intl.NumberFormat('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(v)||0);
+    const money=v=>'\u20B9'+new Intl.NumberFormat('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(v)||0);
     const anyPrice=b.items.some(i=>Number(i.price)>0);
-    const rows=b.items.map((i,n)=>'<tr><td>'+(n+1)+'</td><td>'+esc(i.productName)+'</td><td class="r">'+number(i.quantity)+'</td><td>'+esc(i.unit)+'</td>'+(anyPrice?'<td class="r">'+(Number(i.price)>0?money(i.price):'—')+'</td><td class="r">'+(Number(i.price)>0?money(Number(i.price)*Number(i.quantity||0)):'—')+'</td>':'')+'</tr>').join('');
+    const q2=v=>Number(v||0).toFixed(2);
+    const dmy=s=>{const d=new Date(s+'T00:00:00');return isNaN(d)?esc(s||''):String(d.getDate()).padStart(2,'0')+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+d.getFullYear();};
+    const rows=b.items.map((i,n)=>'<tr><td class="c">'+(n+1)+'</td><td>'+esc(i.productName)+'</td><td class="c">'+q2(i.quantity)+'&nbsp;&nbsp;'+esc(i.unit||'')+'</td><td class="c"></td>'+(anyPrice?'<td class="r">'+(Number(i.price)>0?money(i.price):'')+'</td><td class="r">'+(Number(i.price)>0?money(Number(i.price)*Number(i.quantity||0)):'')+'</td>':'')+'</tr>').join('');
     const total=b.items.reduce((s,i)=>s+(Number(i.price)>0?Number(i.price)*Number(i.quantity||0):0),0);
-    const html='<!doctype html><html><head><meta charset="utf-8"><title>'+esc(b.billNumber)+'</title><style>body{font:13px/1.5 Arial,Helvetica,sans-serif;color:#111;margin:26px}h1{font-size:19px;margin:0 0 2px}.sub{color:#555;font-size:12px;margin:0 0 16px}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #bbb;padding:7px 9px;font-size:12px;text-align:left}th{background:#f2f2f2}.r{text-align:right}td.r,th.r{white-space:nowrap}.tot td{font-weight:bold;border-top:2px solid #111}.meta{display:flex;gap:26px;flex-wrap:wrap;font-size:12px}.meta b{display:block;font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.5px}.note{margin-top:14px;font-size:12px;color:#444}@page{margin:12mm}</style></head><body><h1>'+esc(bb.name)+'</h1><p class="sub">Dispatch record</p><div class="meta"><div><b>Bill number</b>'+esc(b.billNumber)+'</div><div><b>Date</b>'+dateLabel(b.date)+'</div><div><b>Customer</b>'+esc(b.customerName)+'</div></div><table><thead><tr><th>#</th><th>Product</th><th class="r">Qty</th><th>Unit</th>'+(anyPrice?'<th class="r">Price</th><th class="r">Amount</th>':'')+'</tr></thead><tbody>'+rows+(anyPrice&&total>0?'<tr class="tot"><td colspan="4"></td><td class="r">Total</td><td class="r">'+money(total)+'</td></tr>':'')+'</tbody></table>'+(b.notes?'<p class="note"><b>Note:</b> '+esc(b.notes)+'</p>':'')+'</body></html>';
+    const html='<!doctype html><html><head><meta charset="utf-8"><title>'+esc(b.billNumber)+'</title><style>body{font:12.5px/1.55 Arial,Helvetica,sans-serif;color:#111;margin:18px}.shop{text-align:center;font-size:16px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;margin:0 0 10px}.head{width:100%;border-collapse:collapse}.head td{border:1px solid #111;padding:8px 10px;vertical-align:top;width:58%}.head td.right{width:42%}.title{font-size:16px;font-weight:bold;margin-bottom:8px}.line{margin:3px 0}.blank{display:inline-block;border-bottom:1px solid #111;min-width:140px}table.items{width:100%;border-collapse:collapse}table.items th,table.items td{border:1px solid #111;padding:5px 8px;font-size:12px;text-align:left}table.items th{background:#eee}.c{text-align:center}.r{text-align:right;white-space:nowrap}.tot td{font-weight:bold;border-top:2px solid #111}.terms{border:1px solid #111;border-top:0;padding:6px 10px;font-size:11px}.terms b{display:block;margin-bottom:2px}.terms p{margin:1px 0}.sign{margin-top:34px;text-align:right;font-size:12px}@page{margin:12mm}</style></head><body>'
+    +'<p class="shop">'+esc(bb.name)+'</p>'
+    +'<table class="head"><tr><td><div class="title">Delivery Challan</div>'
+    +'<div class="line">Party&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <b>'+esc(b.customerName)+'</b></div>'
+    +'<div class="line">Address&nbsp;&nbsp;: <span class="blank">&nbsp;</span></div>'
+    +'<div class="line">Mobile No.: <span class="blank">&nbsp;</span></div></td>'
+    +'<td class="right"><div class="line">DC No.&nbsp;&nbsp;: <b>'+esc(b.billNumber)+'</b></div>'
+    +'<div class="line">DC.Date&nbsp;: <b>'+dmy(b.date)+'</b></div>'
+    +'<div class="line">Transport: <span class="blank">&nbsp;</span></div></td></tr></table>'
+    +'<table class="items"><thead><tr><th style="width:6%">SN</th><th style="width:44%">Description</th><th style="width:17%">Unit-1</th><th style="width:17%">Unit-2</th>'+(anyPrice?'<th style="width:8%" class="r">Rate</th><th style="width:8%" class="r">Amount</th>':'')+'</tr></thead><tbody>'+rows+(anyPrice&&total>0?'<tr class="tot"><td colspan="3"></td><td class="c">Total</td><td></td><td class="r">'+money(total)+'</td></tr>':'')+'</tbody></table>'
+    +'<div class="terms"><b>Terms &amp; Conditions</b>'
+    +'<p>1. Kindly check item from challan.</p>'
+    +'<p>2. Cash Transaction only. If credit, payment should be made within 7 days from the bill date.</p>'
+    +'<p>3. Goods once sold will not be taken back.</p>'
+    +'<p>4. Subject to &quot;Mandsaur&quot; Jurisdiction.</p></div>'
+    +'<div class="sign">Receiver\'s Signature</div>'
+    +'</body></html>';
     const frame=document.createElement('iframe');
     frame.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0';
     document.body.append(frame);
