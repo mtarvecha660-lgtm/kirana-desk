@@ -1,6 +1,6 @@
 import { firebaseConfig } from './firebase-config.js';
 
-/* Local-first dispatch register. Intentionally contains no price, GST, or payment fields. */
+/* Local-first dispatch register. Price on each bill line is optional; no GST or payment fields. */
 (() => {
   'use strict';
   const BIZ = [
@@ -209,21 +209,25 @@ import { firebaseConfig } from './firebase-config.js';
     if(page==='dashboard')return renderDashboard(); if(page==='bills')return renderBills(); if(page==='catalog')return renderCatalog(); if(page==='analytics')return renderAnalytics(); if(page==='backup')return renderBackup();
   }
   function go(p){page=p;render().catch(e=>{console.error(e);toast('Could not load this page.',true);});}
-  function billDialog(data) {
+  function billDialog(data, editMode) {
     Promise.all([all('products'),all('customers')]).then(res=>{
-      const products=res[0].filter(x=>x.businessId===data.businessId), customers=res[1].filter(x=>x.businessId===data.businessId), readonly=!!data.billNumber;
-      const rows=data.items.map(i=>'<div class="item-row"><input class="input" list="product-list" data-field="productName" value="'+esc(i.productName)+'" placeholder="Search product" required '+(readonly?'readonly':'')+'><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity)+'" placeholder="0" required '+(readonly?'readonly':'')+'><input class="input" list="unit-list" data-field="unit" value="'+esc(i.unit)+'" placeholder="e.g. bag" required '+(readonly?'readonly':'')+'>'+(readonly?'':'<button class="icon-button remove-item" type="button" data-action="remove-item">×</button>')+'</div>').join('');
-      $('#bill-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">'+(readonly?'DISPATCH BILL':'NEW DISPATCH')+'</div><h2>'+(readonly?esc(data.billNumber):'Create a bill')+'</h2><p>'+esc(biz(data.businessId).name)+' · '+(readonly?'FY '+esc(data.financialYear):'Number assigned when saved for FY '+fy(data.date))+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div>'+
-       '<form id="bill-form"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><select id="bill-business" name="businessId" class="select" '+(readonly?'disabled':'')+'>'+BIZ.map(b=>'<option value="'+b.id+'" '+(data.businessId===b.id?'selected':'')+'>'+esc(b.name)+'</option>').join('')+'</select></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(readonly?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" name="customerName" list="customer-list" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(readonly?'readonly':'')+'><datalist id="customer-list">'+customers.map(x=>'<option value="'+esc(x.name)+'">').join('')+'</datalist></div></div>'+
-       '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(readonly?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table"><div class="items-table-head"><div>PRODUCT</div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div><datalist id="product-list">'+products.map(x=>'<option value="'+esc(x.name)+'">').join('')+'</datalist><datalist id="unit-list">'+['bag','kg','g','litre','box','piece','quintal','tonne','packet','dozen'].map(x=>'<option value="'+x+'">').join('')+'</datalist></div>'+
-       '<div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(readonly?'readonly':'')+'></div><div class="modal-section helper-box">'+(readonly?'Saved dispatch record.':'Bill number is assigned on save. Sequences are separate by form and restart each Indian financial year (1 April). No prices or GST.')+'</div></div>'+
-       '<div class="modal-foot">'+(readonly?(can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete record</button>':''): '<span class="field-hint">Product · quantity · unit</span>')+'<div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(readonly?'':'<button class="button button-primary" type="submit">Save record</button>')+'</div></div></form>';
+      const products=res[0].filter(x=>x.businessId===data.businessId), customers=res[1].filter(x=>x.businessId===data.businessId);
+      const isSaved=!!data.billNumber, editing=isSaved&&!!editMode&&can('bill');
+      const lockCore=isSaved, lockFields=isSaved&&!editing;
+      const rows=data.items.map(i=>'<div class="item-row"><input class="input" data-field="productName" value="'+esc(i.productName)+'" placeholder="Search product" required '+(lockFields?'readonly':'')+'><input class="input" type="number" min="0" step="any" data-field="price" value="'+esc(i.price==null?'':i.price)+'" placeholder="price"><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity)+'" placeholder="0" required '+(lockFields?'readonly':'')+'><input class="input" data-field="unit" value="'+esc(i.unit)+'" placeholder="e.g. bag" required '+(lockFields?'readonly':'')+'>'+(lockFields?'':'<button class="icon-button remove-item" type="button" data-action="remove-item">×</button>')+'</div>').join('');
+      const total=data.items.reduce((s,i)=>s+(Number(i.price)>0?Number(i.price)*Number(i.quantity||0):0),0);
+      $('#bill-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">'+(editing?'EDIT RECORD':(isSaved?'DISPATCH RECORD':'NEW DISPATCH'))+'</div><h2>'+(isSaved?esc(data.billNumber):'Create a bill')+'</h2><p>'+esc(biz(data.businessId).name)+' · '+(isSaved?'FY '+esc(data.financialYear):'Number assigned when saved for FY '+fy(data.date))+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div>'+
+       '<form id="bill-form"><input type="hidden" name="billId" value="'+(isSaved?esc(data.id):'')+'"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><input type="hidden" id="bill-business" name="businessId" value="'+esc(data.businessId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(data.businessId===b.id?' active':'')+'" data-action="pick-business" data-id="'+b.id+'" '+(lockCore?'disabled':'')+'>'+esc(b.name)+'</button>').join('')+'</div></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(lockCore?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" name="customerName" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(lockFields?'readonly':'')+'></div></div>'+
+       '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(lockFields?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table"><div class="items-table-head"><div>PRODUCT</div><div>PRICE</div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div></div>'+
+       (isSaved&&total>0?'<div class="modal-section total-line"><span>Amount total (priced lines)</span><b>₹'+number(Math.round(total*100)/100)+'</b></div>':'')+
+       '<div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, or note. Bill number and date stay fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price on each line is optional. No GST.')+'</div></div>'+
+       '<div class="modal-foot">'+(isSaved&&!editing?'<button class="button button-light" type="button" data-action="print-bill" data-id="'+esc(data.id)+'">⎙ Print</button>':'<span class="field-hint">'+(editing?'Bill number stays the same':'Product · price (optional) · quantity · unit')+'</span>')+'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(editing?'<button class="button button-primary" type="submit">Save changes</button>':(!isSaved?'<button class="button button-primary" type="submit">Save record</button>':(can('bill')?'<button class="button button-primary" type="button" data-action="edit-bill" data-id="'+esc(data.id)+'">Edit</button>':'')))+(isSaved&&!editing&&can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete</button>':'')+'</div></div></form>';
     }).catch(e=>{console.error(e);toast('Could not load your catalog.',true);});
   }
   function newBill(key) { const businessId=key||(form==='all'?'sampurn':form); billDialog({businessId,date:today(),customerName:'',items:[{productName:'',quantity:'',unit:''}],notes:''}); $('#bill-dialog').showModal(); }
   function recordDialog(kind, key, existing) {
     const product=kind==='products', bizId=key||(existing&&existing.businessId)||(form==='all'?'sampurn':form);
-    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>This record belongs to the selected form only.</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid"><div class="full"><label class="field-label">FORM</label><select class="select" name="businessId">'+BIZ.map(b=>'<option value="'+b.id+'" '+(b.id===bizId?'selected':'')+'>'+esc(b.name)+'</option>').join('')+'</select></div><div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
+    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>This record belongs to the selected form only.</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid"><div class="full"><label class="field-label">FORM</label><input type="hidden" name="businessId" value="'+esc(bizId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(b.id===bizId?' active':'')+'" data-action="pick-record-business" data-id="'+b.id+'">'+esc(b.name)+'</button>').join('')+'</div></div><div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
     $('#record-dialog').showModal();
   }
   async function backup() {
@@ -234,8 +238,8 @@ import { firebaseConfig } from './firebase-config.js';
   async function exportAnalytics() {
     const start=startDate(analyticsPeriod), bills=(await all('bills')).filter(b=>(form==='all'||b.businessId===form)&&new Date(b.date+'T12:00:00')>=start);
     const quote=value=>'"'+String(value==null?'':value).replace(/"/g,'""')+'"';
-    const rows=[['Bill number','Financial year','Date','Form','Customer','Product','Quantity','Unit','Note']];
-    bills.forEach(b=>b.items.forEach(i=>rows.push([b.billNumber,b.financialYear,b.date,biz(b.businessId).name,b.customerName,i.productName,i.quantity,i.unit,b.notes||''])));
+    const rows=[['Bill number','Financial year','Date','Form','Customer','Product','Price','Quantity','Unit','Amount','Note']];
+    bills.forEach(b=>b.items.forEach(i=>rows.push([b.billNumber,b.financialYear,b.date,biz(b.businessId).name,b.customerName,i.productName,i.price==null?'':i.price,i.quantity,i.unit,i.price==null?'':Number(i.price)*Number(i.quantity||0),b.notes||''])));
     const csv='\uFEFF'+rows.map(row=>row.map(quote).join(',')).join('\r\n'), url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})), a=document.createElement('a');
     a.href=url;a.download='kirana-dispatch-report-'+today()+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     toast('CSV report downloaded. Open it in Excel or another spreadsheet app.');
@@ -282,6 +286,53 @@ import { firebaseConfig } from './firebase-config.js';
     }
     await Promise.all(stores.map((store,index)=>replaceLocal(store,remote[index])));
   }
+  function printBill(b) {
+    const bb=biz(b.businessId);
+    const money=v=>'₹'+new Intl.NumberFormat('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(v)||0);
+    const anyPrice=b.items.some(i=>Number(i.price)>0);
+    const rows=b.items.map((i,n)=>'<tr><td>'+(n+1)+'</td><td>'+esc(i.productName)+'</td><td class="r">'+number(i.quantity)+'</td><td>'+esc(i.unit)+'</td>'+(anyPrice?'<td class="r">'+(Number(i.price)>0?money(i.price):'—')+'</td><td class="r">'+(Number(i.price)>0?money(Number(i.price)*Number(i.quantity||0)):'—')+'</td>':'')+'</tr>').join('');
+    const total=b.items.reduce((s,i)=>s+(Number(i.price)>0?Number(i.price)*Number(i.quantity||0):0),0);
+    const html='<!doctype html><html><head><meta charset="utf-8"><title>'+esc(b.billNumber)+'</title><style>body{font:13px/1.5 Arial,Helvetica,sans-serif;color:#111;margin:26px}h1{font-size:19px;margin:0 0 2px}.sub{color:#555;font-size:12px;margin:0 0 16px}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #bbb;padding:7px 9px;font-size:12px;text-align:left}th{background:#f2f2f2}.r{text-align:right}td.r,th.r{white-space:nowrap}.tot td{font-weight:bold;border-top:2px solid #111}.meta{display:flex;gap:26px;flex-wrap:wrap;font-size:12px}.meta b{display:block;font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.5px}.note{margin-top:14px;font-size:12px;color:#444}@page{margin:12mm}</style></head><body><h1>'+esc(bb.name)+'</h1><p class="sub">Dispatch record</p><div class="meta"><div><b>Bill number</b>'+esc(b.billNumber)+'</div><div><b>Date</b>'+dateLabel(b.date)+'</div><div><b>Customer</b>'+esc(b.customerName)+'</div></div><table><thead><tr><th>#</th><th>Product</th><th class="r">Qty</th><th>Unit</th>'+(anyPrice?'<th class="r">Price</th><th class="r">Amount</th>':'')+'</tr></thead><tbody>'+rows+(anyPrice&&total>0?'<tr class="tot"><td colspan="4"></td><td class="r">Total</td><td class="r">'+money(total)+'</td></tr>':'')+'</tbody></table>'+(b.notes?'<p class="note"><b>Note:</b> '+esc(b.notes)+'</p>':'')+'</body></html>';
+    const frame=document.createElement('iframe');
+    frame.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+    document.body.append(frame);
+    frame.srcdoc=html;
+    frame.onload=()=>{const w=frame.contentWindow;setTimeout(()=>{try{if(!w.print)throw 0;w.focus();w.print();}catch(e){const n=window.open('','_blank');if(n){n.document.write(html);n.document.close();}}setTimeout(()=>frame.remove(),60000);},250);};
+  }
+  let sugBox=null;
+  function closeSug(){ if(sugBox){sugBox.remove();sugBox=null;} }
+  function openSug(input, values){
+    closeSug();
+    const q=input.value.trim().toLowerCase();
+    const picks=values.filter(v=>!q||v.toLowerCase().includes(q)).slice(0,8);
+    if(!picks.length)return;
+    const rect=input.getBoundingClientRect();
+    const box=document.createElement('div'); box.className='suggestions sug-fixed';
+    picks.forEach(v=>{
+      const b=document.createElement('button'); b.type='button'; b.className='suggestion'; b.textContent=v;
+      const pick=e=>{e.preventDefault();input.value=v;input.dispatchEvent(new Event('change',{bubbles:true}));closeSug();input.focus();};
+      b.addEventListener('mousedown',pick);
+      b.addEventListener('touchstart',pick,{passive:false});
+      box.append(b);
+    });
+    document.body.append(box);
+    const bh=Math.min(box.scrollHeight,160);
+    let top=rect.bottom+4;
+    if(top+bh>window.innerHeight-8)top=Math.max(8,rect.top-bh-4);
+    box.style.top=top+'px'; box.style.left=Math.max(8,rect.left)+'px'; box.style.width=rect.width+'px';
+    sugBox=box;
+  }
+  function sugValuesFor(input){
+    if(input.id==='bill-customer')return all('customers').then(rows=>rows.filter(x=>form==='all'||x.businessId===(($('#bill-business')||{}).value)||x.businessId===undefined).map(x=>x.name));
+    if(input.dataset.field==='productName')return all('products').then(rows=>rows.filter(x=>x.businessId===(($('#bill-business')||{}).value)||x.businessId===undefined).map(x=>x.name));
+    if(input.dataset.field==='unit')return Promise.resolve(['bag','kg','g','litre','box','piece','quintal','tonne','packet','dozen']);
+    return Promise.resolve([]);
+  }
+  function maybeSug(target){ if(target&&(target.id==='bill-customer'||target.dataset.field==='productName'||target.dataset.field==='unit')){ if(target.readOnly||target.disabled){closeSug();return;} sugValuesFor(target).then(vals=>{ if(document.activeElement===target)openSug(target,vals); }); } }
+  document.addEventListener('focusin',e=>maybeSug(e.target));
+  document.addEventListener('input',e=>{ if(e.target&&(e.target.id==='bill-customer'||e.target.dataset.field==='productName'||e.target.dataset.field==='unit')){ if(e.target.value.trim()===''){maybeSug(e.target);}else{sugValuesFor(e.target).then(vals=>openSug(e.target,vals));} } });
+  document.addEventListener('click',e=>{ if(sugBox&&!e.target.closest('.sug-fixed'))closeSug(); },true);
+  window.addEventListener('scroll',closeSug,true);
   document.addEventListener('click', e=>{
     const p=e.target.closest('[data-page]'); if(p){page=p.dataset.page;render();return;}
     const t=e.target.closest('[data-business]'); if(t){form=t.dataset.business;render();return;}
@@ -295,9 +346,13 @@ import { firebaseConfig } from './firebase-config.js';
     if(x==='edit-record'){const store=a.dataset.kind;all(store).then(items=>{const item=items.find(r=>r.id===a.dataset.id);if(item)recordDialog(store,item.businessId,item);});}
     if(x==='export-backup')backup().catch(()=>toast('Could not create backup.',true));
     if(x==='export-analytics')exportAnalytics().catch(()=>toast('Could not export this report.',true));
-    if(x==='add-item')$('#bill-items').insertAdjacentHTML('beforeend','<div class="item-row"><input class="input" list="product-list" data-field="productName" placeholder="Search product" required><input class="input" type="number" min="0.001" step="any" data-field="quantity" placeholder="0" required><input class="input" list="unit-list" data-field="unit" placeholder="e.g. bag" required><button class="icon-button" type="button" data-action="remove-item">×</button></div>');
+    if(x==='add-item')$('#bill-items').insertAdjacentHTML('beforeend','<div class="item-row"><input class="input" data-field="productName" placeholder="Search product" required><input class="input" type="number" min="0" step="any" data-field="price" placeholder="price"><input class="input" type="number" min="0.001" step="any" data-field="quantity" placeholder="0" required><input class="input" data-field="unit" placeholder="e.g. bag" required><button class="icon-button" type="button" data-action="remove-item">×</button></div>');
     if(x==='remove-item'){const rows=$$('.item-row',$('#bill-items'));if(rows.length>1)a.closest('.item-row').remove();else toast('A bill needs one item.');}
     if(x==='view-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){billDialog(b);$('#bill-dialog').showModal();}});
+    if(x==='pick-business'){const inp=$('#bill-business');if(inp&&!inp.disabled){inp.value=a.dataset.id;$$('.pick-chip',a.closest('.chip-row')).forEach(c=>c.classList.toggle('active',c===a));inp.dispatchEvent(new Event('change',{bubbles:true}));}}
+    if(x==='pick-record-business'){const inp=a.closest('form').querySelector('[name="businessId"]');if(inp){inp.value=a.dataset.id;$$('.pick-chip',a.closest('.chip-row')).forEach(c=>c.classList.toggle('active',c===a));}}
+    if(x==='edit-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){$('#bill-dialog').close();billDialog(b,true);$('#bill-dialog').showModal();}});
+    if(x==='print-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b)printBill(b);});
     if(x==='delete-bill'&&confirm('Delete this bill? Its number remains reserved and will never be reused.'))del('bills',a.dataset.id).then(()=>{$('#bill-dialog').close();toast('Bill deleted. Number remains reserved.');render();});
     if(x==='delete-record'&&confirm('Delete this catalog entry? Existing bills will not change.'))del(a.dataset.kind,a.dataset.id).then(()=>{toast('Catalog entry removed.');render();});
 
@@ -324,10 +379,14 @@ import { firebaseConfig } from './firebase-config.js';
       $('#record-dialog').close();toast('Saved to this form.');render();
     }
     if(e.target.id==='bill-form'){
-      e.preventDefault();const rows=$$('.item-row',e.target), items=rows.map(r=>({productName:$('[data-field="productName"]',r).value.trim(),quantity:Number($('[data-field="quantity"]',r).value),unit:$('[data-field="unit"]',r).value.trim()}));
+      e.preventDefault();const rows=$$('.item-row',e.target), items=rows.map(r=>{const pr=$('[data-field="price"]',r);return {productName:$('[data-field="productName"]',r).value.trim(),quantity:Number($('[data-field="quantity"]',r).value),unit:$('[data-field="unit"]',r).value.trim(),price:pr&&pr.value!==''?Number(pr.value):null};});
       const data={businessId:$('#bill-business').value,date:$('#bill-date').value,customerName:$('#bill-customer').value.trim(),notes:$('#bill-notes').value.trim(),items};
+      const idInput=e.target.querySelector('[name="billId"]'), billId=idInput?idInput.value:'';
       if(!data.customerName||!data.date||items.some(i=>!i.productName||!(i.quantity>0)||!i.unit)){toast('Fill in the customer, date, product, quantity, and unit.',true);return;}
-      try{const saved=await makeBill(data);$('#bill-dialog').close();toast(saved.billNumber+' saved.');billDialog(saved);$('#bill-dialog').showModal();render();}catch(err){console.error(err);toast(window.KiranaCloud&&window.KiranaCloud.configured?'Could not save. Check internet; shared bill numbering needs a connection.':'Could not save bill.',true);}
+      try{
+        if(billId){const existing=(await all('bills')).find(b=>b.id===billId);if(existing){existing.customerName=data.customerName;existing.notes=data.notes;existing.items=items;await put('bills',existing);$('#bill-dialog').close();toast(existing.billNumber+' updated.');render();return;}}
+        const saved=await makeBill(data);$('#bill-dialog').close();toast(saved.billNumber+' saved.');billDialog(saved);$('#bill-dialog').showModal();render();
+      }catch(err){console.error(err);toast(window.KiranaCloud&&window.KiranaCloud.configured?'Could not save. Check internet; shared bill numbering needs a connection.':'Could not save bill.',true);}
     }
   });
   $('#new-bill-top').addEventListener('click',()=>newBill());
