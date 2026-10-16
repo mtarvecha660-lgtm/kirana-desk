@@ -47,7 +47,7 @@ if (!configured) {
       return storeSdk.deleteDoc(docFor(name, key));
     },
     listen(callback, onError) {
-      return ['bills', 'counters', 'products', 'customers'].map(name =>
+      return ['bills', 'counters', 'products', 'customers', 'supplyorders'].map(name =>
         storeSdk.onSnapshot(collectionFor(name), snapshot => {
           callback(name, snapshot.docs.map(item => Object.assign({}, item.data(), { id: item.id })));
         }, onError)

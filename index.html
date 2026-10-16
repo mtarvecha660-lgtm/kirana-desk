@@ -21,6 +21,7 @@
       <nav class="main-nav" aria-label="Main navigation">
         <button class="nav-item active" data-page="dashboard"><span class="nav-icon">▦</span> Overview</button>
         <button class="nav-item" data-page="bills"><span class="nav-icon">▤</span> Records <span id="bill-nav-count" class="nav-count">0</span></button>
+        <button class="nav-item" data-page="supply"><span class="nav-icon">⧉</span> Supply orders <span id="supply-nav-count" class="nav-count">0</span></button>
         <button class="nav-item" data-page="catalog"><span class="nav-icon">◫</span> Products & customers</button>
         <button class="nav-item" data-page="analytics"><span class="nav-icon">⌁</span> Analytics</button>
       </nav>
@@ -56,6 +57,7 @@
   </section>
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
   <dialog id="bill-dialog" class="modal"></dialog>
+  <dialog id="supply-dialog" class="modal"></dialog>
   <dialog id="record-dialog" class="modal modal-narrow"></dialog>
   <dialog id="return-dialog" class="modal"></dialog>
   <script type="module" src="firebase.js"></script>
