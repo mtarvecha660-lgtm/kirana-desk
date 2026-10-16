@@ -4,7 +4,7 @@ import { firebaseConfig } from './firebase-config.js';
 (() => {
   'use strict';
   const BIZ = [
-    { id: 'sampurn', name: 'Sampurn Kirana', prefix: 'SK', color: '#a5cc62' },
+    { id: 'sampurn', name: 'Sampurn Kirana', prefix: 'SK', color: '#a5cc62', addr: 'Kalakhet, Mandsaur', gstin: '23AEZPT3880L1ZI' },
     { id: 'surya', name: 'Surya Supplies', prefix: 'SS', color: '#76b7a6' },
     { id: 'dhanraj', name: 'Dhanraj Products', prefix: 'DP', color: '#d1a66c' }
   ];
@@ -170,7 +170,7 @@ import { firebaseConfig } from './firebase-config.js';
   async function renderCatalog() {
     const res = await Promise.all([all('products'),all('customers')]), products=res[0], customers=res[1], list=catalog==='products'?products:customers;
     const shown = list.filter(r => (form==='all'||r.businessId===form) && (!catalogSearch || (r.name+' '+(r.note||'')).toLowerCase().includes(catalogSearch.toLowerCase())));
-    const label = catalog==='products'?'product':'customer', records = shown.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>'+(catalog==='products'?'PRODUCT':'CUSTOMER')+'</th><th>FORM</th><th>'+(catalog==='products'?'UNIT':'CONTACT / NOTE')+'</th><th>ADDED</th><th></th></tr></thead><tbody>'+shown.map(r => '<tr><td><div class="row-title"><span class="avatar">'+esc(r.name.slice(0,1).toUpperCase())+'</span><span class="strong-cell">'+esc(r.name)+'</span>'+(r.isSample?'<span class="tag gray">SAMPLE</span>':'')+'</div></td><td>'+chip(r.businessId)+'</td><td class="muted-cell">'+esc(catalog==='products'?(r.unit||'—'):(r.note||'—'))+'</td><td class="muted-cell">'+dateLabel(r.createdAt.slice(0,10))+'</td><td>'+(can('catalog')?'<button class="icon-button" data-action="edit-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Edit">✎</button>':'')+(can('delete')?'<button class="icon-button" data-action="delete-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Delete">⌫</button>':'')+'</td></tr>').join('')+'</tbody></table></div>' : empty('No '+catalog+' yet','Add '+(catalog==='products'?'products dispatched from this form':'the people who receive products from this form')+'. They will be searchable on bills.', can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '');
+    const label = catalog==='products'?'product':'customer', records = shown.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>'+(catalog==='products'?'PRODUCT':'CUSTOMER')+'</th><th>FORM</th><th>'+(catalog==='products'?'UNIT':'CONTACT / NOTE')+'</th><th>ADDED</th><th></th></tr></thead><tbody>'+shown.map(r => '<tr><td><div class="row-title"><span class="avatar">'+esc(r.name.slice(0,1).toUpperCase())+'</span><span class="strong-cell">'+esc(r.name)+'</span>'+(r.isSample?'<span class="tag gray">SAMPLE</span>':'')+(catalog==='products'&&r.brand?'<span class="tag gray">'+esc(r.brand)+'</span>':'')+'</div></td><td>'+chip(r.businessId)+'</td><td class="muted-cell">'+esc(catalog==='products'?(r.unit||'—'):(r.note||'—'))+'</td><td class="muted-cell">'+dateLabel(r.createdAt.slice(0,10))+'</td><td>'+(can('catalog')?'<button class="icon-button" data-action="edit-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Edit">✎</button>':'')+(can('delete')?'<button class="icon-button" data-action="delete-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Delete">⌫</button>':'')+'</td></tr>').join('')+'</tbody></table></div>' : empty('No '+catalog+' yet','Add '+(catalog==='products'?'products dispatched from this form':'the people who receive products from this form')+'. They will be searchable on bills.', can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '');
     $('#page-content').innerHTML = head('MASTER LISTS','Products & customers','Each form has its own searchable lists.','<div class="head-actions">' + (can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '') + '</div>')+tabs()+
       '<div class="tabs-underline"><button class="underline-tab '+(catalog==='products'?'active':'')+'" data-catalog-tab="products">Products ('+products.filter(r=>form==='all'||r.businessId===form).length+')</button><button class="underline-tab '+(catalog==='customers'?'active':'')+'" data-catalog-tab="customers">Customers ('+customers.filter(r=>form==='all'||r.businessId===form).length+')</button></div><section class="panel" style="margin-top:15px"><div class="toolbar" style="padding:14px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="catalog-search" class="input" placeholder="Search '+catalog+'…" value="'+esc(catalogSearch)+'"></div><span class="tag gray">'+shown.length+' records</span></div></div>'+records+'</section>';
   }
@@ -228,7 +228,7 @@ import { firebaseConfig } from './firebase-config.js';
   function newBill(key) { const businessId=key||(form==='all'?'sampurn':form); billDialog({businessId,date:today(),customerName:'',items:[{productName:'',quantity:'',unit:''}],notes:''}); $('#bill-dialog').showModal(); }
   function recordDialog(kind, key, existing) {
     const product=kind==='products', bizId=key||(existing&&existing.businessId)||(form==='all'?'sampurn':form);
-    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>This record belongs to the selected form only.</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid"><div class="full"><label class="field-label">FORM</label><input type="hidden" name="businessId" value="'+esc(bizId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(b.id===bizId?' active':'')+'" data-action="pick-record-business" data-id="'+b.id+'">'+esc(b.name)+'</button>').join('')+'</div></div><div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
+    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>This record belongs to the selected form only.</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid"><div class="full"><label class="field-label">FORM</label><input type="hidden" name="businessId" value="'+esc(bizId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(b.id===bizId?' active':'')+'" data-action="pick-record-business" data-id="'+b.id+'">'+esc(b.name)+'</button>').join('')+'</div></div><div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div><div class="full"><label class="field-label">BRAND <span style="font-weight:400">(optional)</span></label><input class="input" name="brand" value="'+esc(existing&&existing.brand||'')+'" placeholder="e.g. Fortune"></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
     $('#record-dialog').showModal();
   }
   async function backup() {
@@ -287,36 +287,47 @@ import { firebaseConfig } from './firebase-config.js';
     }
     await Promise.all(stores.map((store,index)=>replaceLocal(store,remote[index])));
   }
-  function printBill(b) {
-    const bb=biz(b.businessId);
-    const money=v=>'\u20B9'+new Intl.NumberFormat('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(v)||0);
-    const anyPrice=b.items.some(i=>Number(i.price)>0);
-    const q2=v=>Number(v||0).toFixed(2);
-    const dmy=s=>{const d=new Date(s+'T00:00:00');return isNaN(d)?esc(s||''):String(d.getDate()).padStart(2,'0')+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+d.getFullYear();};
-    const rows=b.items.map((i,n)=>'<tr><td class="c">'+(n+1)+'</td><td>'+esc(i.productName)+'</td><td class="c">'+q2(i.quantity)+'&nbsp;&nbsp;'+esc(i.unit||'')+'</td><td class="c"></td>'+(anyPrice?'<td class="r">'+(Number(i.price)>0?money(i.price):'')+'</td><td class="r">'+(Number(i.price)>0?money(Number(i.price)*Number(i.quantity||0)):'')+'</td>':'')+'</tr>').join('');
-    const total=b.items.reduce((s,i)=>s+(Number(i.price)>0?Number(i.price)*Number(i.quantity||0):0),0);
-    const html='<!doctype html><html><head><meta charset="utf-8"><title>'+esc(b.billNumber)+'</title><style>body{font:12.5px/1.55 Arial,Helvetica,sans-serif;color:#111;margin:18px}.shop{text-align:center;font-size:16px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;margin:0 0 10px}.head{width:100%;border-collapse:collapse}.head td{border:1px solid #111;padding:8px 10px;vertical-align:top;width:58%}.head td.right{width:42%}.title{font-size:16px;font-weight:bold;margin-bottom:8px}.line{margin:3px 0}.blank{display:inline-block;border-bottom:1px solid #111;min-width:140px}table.items{width:100%;border-collapse:collapse}table.items th,table.items td{border:1px solid #111;padding:5px 8px;font-size:12px;text-align:left}table.items th{background:#eee}.c{text-align:center}.r{text-align:right;white-space:nowrap}.tot td{font-weight:bold;border-top:2px solid #111}.terms{border:1px solid #111;border-top:0;padding:6px 10px;font-size:11px}.terms b{display:block;margin-bottom:2px}.terms p{margin:1px 0}.sign{margin-top:34px;text-align:right;font-size:12px}@page{margin:12mm}</style></head><body>'
-    +'<p class="shop">'+esc(bb.name)+'</p>'
-    +'<table class="head"><tr><td><div class="title">Delivery Challan</div>'
-    +'<div class="line">Party&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <b>'+esc(b.customerName)+'</b></div>'
-    +'<div class="line">Address&nbsp;&nbsp;: <span class="blank">&nbsp;</span></div>'
-    +'<div class="line">Mobile No.: <span class="blank">&nbsp;</span></div></td>'
-    +'<td class="right"><div class="line">DC No.&nbsp;&nbsp;: <b>'+esc(b.billNumber)+'</b></div>'
-    +'<div class="line">DC.Date&nbsp;: <b>'+dmy(b.date)+'</b></div>'
-    +'<div class="line">Transport: <span class="blank">&nbsp;</span></div></td></tr></table>'
-    +'<table class="items"><thead><tr><th style="width:6%">SN</th><th style="width:44%">Description</th><th style="width:17%">Unit-1</th><th style="width:17%">Unit-2</th>'+(anyPrice?'<th style="width:8%" class="r">Rate</th><th style="width:8%" class="r">Amount</th>':'')+'</tr></thead><tbody>'+rows+(anyPrice&&total>0?'<tr class="tot"><td colspan="3"></td><td class="c">Total</td><td></td><td class="r">'+money(total)+'</td></tr>':'')+'</tbody></table>'
-    +'<div class="terms"><b>Terms &amp; Conditions</b>'
-    +'<p>1. Kindly check item from challan.</p>'
-    +'<p>2. Cash Transaction only. If credit, payment should be made within 7 days from the bill date.</p>'
-    +'<p>3. Goods once sold will not be taken back.</p>'
-    +'<p>4. Subject to &quot;Mandsaur&quot; Jurisdiction.</p></div>'
-    +'<div class="sign">Receiver\'s Signature</div>'
-    +'</body></html>';
-    const frame=document.createElement('iframe');
-    frame.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0';
-    document.body.append(frame);
-    frame.srcdoc=html;
-    frame.onload=()=>{const w=frame.contentWindow;setTimeout(()=>{try{if(!w.print)throw 0;w.focus();w.print();}catch(e){const n=window.open('','_blank');if(n){n.document.write(html);n.document.close();}}setTimeout(()=>frame.remove(),60000);},250);};
+  function printChoice(b) {
+    $('#bill-dialog').innerHTML = '<div class="modal-head"><div><div class="eyebrow">PRINT</div><h2>Bill ' + esc(b.billNumber) + '</h2><p>This bill has prices. Print with price or without?</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><div class="modal-body"><div style="display:flex;flex-direction:column;gap:10px"><button class="button button-primary" type="button" data-action="print-priced" data-id="' + esc(b.id) + '">With price</button><button class="button button-light" type="button" data-action="print-unpriced" data-id="' + esc(b.id) + '">Without price</button></div></div>';
+  }
+  function printBill(b, withPrice) {
+    const bb = biz(b.businessId);
+    all('products').then(products => {
+      const brandMap = {};
+      products.forEach(p => { brandMap[(p.businessId || '') + '|' + String(p.name || '').toLowerCase()] = p.brand || ''; });
+      const brandOf = i => brandMap[(b.businessId || '') + '|' + String(i.productName || '').toLowerCase()] || '';
+      const money = v => '\u20B9' + new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v) || 0);
+      const anyPrice = b.items.some(i => Number(i.price) > 0);
+      const showPrice = !!withPrice && anyPrice;
+      const q2 = v => Number(v || 0).toFixed(2);
+      const dmy = s => { const d = new Date(s + 'T00:00:00'); return isNaN(d) ? esc(s || '') : String(d.getDate()).padStart(2, '0') + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + d.getFullYear(); };
+      const rows = b.items.map((i, n) => { const br = brandOf(i); return '<tr><td class="c">' + (n + 1) + '</td><td>' + esc(i.productName) + (br ? '<div class="bname">' + esc(br) + '</div>' : '') + '</td><td class="c">' + q2(i.quantity) + '&nbsp;' + esc(i.unit || '') + '</td>' + (showPrice ? '<td class="r">' + (Number(i.price) > 0 ? money(i.price) : '') + '</td><td class="r">' + (Number(i.price) > 0 ? money(Number(i.price) * Number(i.quantity || 0)) : '') + '</td>' : '') + '</tr>'; }).join('');
+      const total = b.items.reduce((s, i) => s + (Number(i.price) > 0 ? Number(i.price) * Number(i.quantity || 0) : 0), 0);
+      const subBits = [];
+      if (bb.addr) subBits.push(esc(bb.addr));
+      if (bb.gstin) subBits.push('GSTIN: ' + esc(bb.gstin));
+      const html = '<!doctype html><html><head><meta charset="utf-8"><title>' + esc(b.billNumber) + '</title><style>body{font:12.5px/1.55 Arial,Helvetica,sans-serif;color:#111;margin:16px}.shop{text-align:center;font-size:19px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;margin:0}.shopsub{text-align:center;font-size:12px;margin:2px 0 0}.doc-title{text-align:center;font-size:14px;font-weight:bold;letter-spacing:2px;margin:12px 0 10px;border-top:2px solid #111;border-bottom:2px solid #111;padding:6px 0}.head{width:100%;border-collapse:collapse}.head td{border:1px solid #111;padding:8px 10px;vertical-align:top;width:58%}.head td.right{width:42%}.line{margin:3px 0}.blank{display:inline-block;border-bottom:1px solid #111;min-width:140px}table.items{width:100%;border-collapse:collapse}table.items th,table.items td{border:1px solid #111;padding:5px 8px;font-size:12px;text-align:left}table.items th{background:#eee}.c{text-align:center}.r{text-align:right;white-space:nowrap}.bname{font-size:11px;color:#555}.tot td{font-weight:bold;border-top:2px solid #111}.terms{border:1px solid #111;padding:6px 10px;font-size:11px;margin-top:12px}.terms b{display:block;margin-bottom:2px}.terms p{margin:1px 0}.sign{margin-top:34px;text-align:right;font-size:12px}@page{margin:12mm}</style></head><body>'
+        + '<p class="shop">' + esc(bb.name) + '</p>'
+        + (subBits.length ? '<p class="shopsub">' + subBits.join(' &nbsp;·&nbsp; ') + '</p>' : '')
+        + '<div class="doc-title">Delivery Challan</div>'
+        + '<table class="head"><tr><td><div class="line">Party&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <b>' + esc(b.customerName) + '</b></div>'
+        + '<div class="line">Address&nbsp;&nbsp;: <span class="blank">&nbsp;</span></div>'
+        + '<div class="line">Mobile No.: <span class="blank">&nbsp;</span></div></td>'
+        + '<td class="right"><div class="line">DC No.&nbsp;&nbsp;: <b>' + esc(b.billNumber) + '</b></div>'
+        + '<div class="line">DC.Date&nbsp;: <b>' + dmy(b.date) + '</b></div>'
+        + '<div class="line">Transport: <span class="blank">&nbsp;</span></div></td></tr></table>'
+        + '<table class="items"><thead><tr><th style="width:6%">S.N</th><th style="width:50%">Description of Goods</th><th style="width:18%">Qty.Unit</th>' + (showPrice ? '<th style="width:13%" class="r">Price</th><th style="width:13%" class="r">Amount</th>' : '') + '</tr></thead><tbody>' + rows
+        + (showPrice && total > 0 ? '<tr class="tot"><td colspan="2"></td><td class="c">Grand Total</td><td></td><td class="r">' + money(total) + '</td></tr>' : '')
+        + '</tbody></table>'
+        + '<div class="terms"><b>Terms &amp; Conditions</b><p>1. Kindly check item from challan.</p><p>2. Cash Transaction only. If credit, payment should be made within 7 days from the bill date.</p><p>3. Goods once sold will not be taken back.</p><p>4. Subject to &quot;Mandsaur&quot; Jurisdiction.</p></div>'
+        + '<div class="sign">Receiver\u2019s Signature</div>'
+        + '</body></html>';
+      const frame = document.createElement('iframe');
+      frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+      document.body.append(frame);
+      frame.srcdoc = html;
+      frame.onload = () => { const w = frame.contentWindow; setTimeout(() => { try { if (!w.print) throw 0; w.focus(); w.print(); } catch (e) { const n = window.open('', '_blank'); if (n) { n.document.write(html); n.document.close(); } } setTimeout(() => frame.remove(), 60000); }, 250); };
+    });
   }
   function compressImage(file) {
     return new Promise((resolve, reject) => {
@@ -405,7 +416,8 @@ import { firebaseConfig } from './firebase-config.js';
     if(x==='view-photo'){const local=$('#bill-photo-value'),src2=local?local.value:'';if(src2){photoView(src2,a.dataset.id||'');}else if(a.dataset.id){all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b&&b.photo)photoView(b.photo,a.dataset.id);});}}
     if(x==='back-to-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){billDialog(b);}});
     if(x==='remove-photo'){const v=$('#bill-photo-value');if(v)v.value='';const area=$('#bill-photo-area');renderPhotoArea('',area&&area.dataset.editable!=='no');}
-    if(x==='print-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b)printBill(b);});
+    if(x==='print-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(!b)return;if(b.items.some(i=>Number(i.price)>0))printChoice(b);else printBill(b,false);});
+    if(x==='print-priced'||x==='print-unpriced')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b)printBill(b,x==='print-priced');});
     if(x==='delete-bill'&&confirm('Delete this bill? Its number remains reserved and will never be reused.'))del('bills',a.dataset.id).then(()=>{$('#bill-dialog').close();toast('Bill deleted. Number remains reserved.');render();});
     if(x==='delete-record'&&confirm('Delete this catalog entry? Existing bills will not change.'))del(a.dataset.kind,a.dataset.id).then(()=>{toast('Catalog entry removed.');render();});
 
@@ -429,7 +441,7 @@ import { firebaseConfig } from './firebase-config.js';
     if(e.target.id==='record-form'){
       e.preventDefault();const f=new FormData(e.target), kind=f.get('kind'), oldId=f.get('recordId'), prior=oldId?(await all(kind)).find(x=>x.id===oldId):null, r={id:oldId||uid(),businessId:f.get('businessId'),name:String(f.get('name')).trim(),createdAt:prior?prior.createdAt:new Date().toISOString()};
       if(prior&&prior.isSample&&prior.name===r.name)r.isSample=true;
-      if(kind==='products'){r.unit=String(f.get('unit')||'').trim();await put('products',r);}else{r.note=String(f.get('note')||'').trim();await put('customers',r);}
+      if(kind==='products'){r.unit=String(f.get('unit')||'').trim();r.brand=String(f.get('brand')||'').trim();await put('products',r);}else{r.note=String(f.get('note')||'').trim();await put('customers',r);}
       $('#record-dialog').close();toast('Saved to this form.');render();
     }
     if(e.target.id==='bill-form'){
