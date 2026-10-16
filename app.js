@@ -287,7 +287,7 @@ import { firebaseConfig } from './firebase-config.js';
     }
     await Promise.all(stores.map((store,index)=>replaceLocal(store,remote[index])));
   }
-  function retDlg() { let d = retDlg(); if (!d) { d = document.createElement('dialog'); d.id = 'return-dialog'; d.className = 'modal'; document.body.append(d); } return d; }
+  function retDlg() { let d = $('#return-dialog'); if (!d) { d = document.createElement('dialog'); d.id = 'return-dialog'; d.className = 'modal'; document.body.append(d); } return d; }
   function returnDialog(b) {
     const bb = biz(b.businessId);
     const gotBack = {};
@@ -302,8 +302,8 @@ import { firebaseConfig } from './firebase-config.js';
     const cust = $('#rep-customer') ? $('#rep-customer').value : '';
     return all('bills').then(bills => {
       const rows = [];
-      bills.filter(b => form === 'all' || b.businessId === form).forEach(b => {
-        if ((!cust || b.customerName === cust) && b.date >= from && b.date <= to) b.items.forEach(i => { rows.push({ date: b.date, type: 'Sale', vch: b.billNumber, id: b.id, name: i.productName, unit: i.unit || '', out: Number(i.quantity) || 0, inn: null, amt: Number(i.price) > 0 ? Number(i.price) * Number(i.quantity || 0) : null }); });
+      bills.filter(b => cust ? b.customerName === cust : (form === 'all' || b.businessId === form)).forEach(b => {
+        if (b.date >= from && b.date <= to) b.items.forEach(i => { rows.push({ date: b.date, type: 'Sale', vch: b.billNumber, id: b.id, name: i.productName, unit: i.unit || '', out: Number(i.quantity) || 0, inn: null, amt: Number(i.price) > 0 ? Number(i.price) * Number(i.quantity || 0) : null }); });
         (b.returns || []).forEach(r => { if ((!cust || b.customerName === cust) && r.date >= from && r.date <= to) r.items.forEach(i => { rows.push({ date: r.date, type: 'Sl. Rt', vch: b.billNumber, id: b.id, name: i.productName, unit: i.unit || '', out: null, inn: Number(i.qty) || 0, amt: i.price != null && Number(i.price) > 0 ? Number(i.price) * Number(i.qty || 0) : null }); }); });
       });
       rows.sort((a, b2) => a.date.localeCompare(b2.date) || a.type.localeCompare(b2.type));
@@ -312,9 +312,11 @@ import { firebaseConfig } from './firebase-config.js';
   }
   function returnsReportDialog(preset) {
     const y = new Date(); const fyStart = (y.getMonth() < 3 ? y.getFullYear() - 1 : y.getFullYear()) + '-04-01';
-    all('bills').then(bills => {
-      const names = Array.from(new Set(bills.filter(b => form === 'all' || b.businessId === form).map(b => b.customerName).filter(Boolean))).sort();
+    Promise.all([all('bills'), all('customers')]).then(r => {
+      const bills = r[0];
+      const names = Array.from(new Set(bills.map(b => b.customerName).filter(Boolean).concat(r[1].map(c => c.name)))).sort();
       retDlg().innerHTML = '<div class="modal-head"><div><div class="eyebrow">REPORT</div><h2>In / Out register</h2><p>What went out and what came back, with bill numbers</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><div class="modal-body"><div class="form-grid"><div><label class="field-label">FROM</label><input id="rep-from" class="input" type="date" value="' + fyStart + '"></div><div><label class="field-label">TO</label><input id="rep-to" class="input" type="date" value="' + today() + '"></div><div class="full"><label class="field-label">CUSTOMER</label><select id="rep-customer" class="select"><option value="">All customers</option>' + names.map(n => '<option' + (preset === n ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div></div><div id="rep-out" style="margin-top:14px"><p class="field-hint">Set the duration and customer, then Generate. Bill numbers in the list open that bill.</p></div></div><div class="modal-foot"><button class="button button-light" type="button" data-action="print-return-report">⎙ Print</button><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Close</button><button class="button button-primary" type="button" data-action="generate-return-report">Generate</button></div></div>';
+    if (!retDlg().open) retDlg().showModal();
     });
   }
   function renderReturnReport() {
