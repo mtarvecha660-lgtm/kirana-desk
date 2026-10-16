@@ -1,4 +1,4 @@
-const CACHE = 'kirana-desk-v16';
+const CACHE = 'kirana-desk-v17';
 const FILES = ['./', './index.html', './styles.css', './app.js', './firebase.js', './firebase-config.js', './manifest.webmanifest', './icon.svg'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));

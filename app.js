@@ -151,10 +151,10 @@ import { firebaseConfig } from './firebase-config.js';
     const results = await Promise.all([all('bills'), all('products'), all('customers')]), bills = results[0], products = results[1], customers = results[2];
     const chosen = bills.filter(b => form === 'all' || b.businessId === form), year = fy(today()), current = chosen.filter(b => b.financialYear === year);
     const itemLines = current.reduce((s, b) => s + b.items.length, 0);
-    const p = products.filter(x => form === 'all' || x.businessId === form), c = customers.filter(x => form === 'all' || x.businessId === form);
+    const p = products, c = customers.filter(x => form === 'all' || x.businessId === form);
     const recent = chosen.sort((a,b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)).slice(0,6);
     $('#page-content').innerHTML = head('GOOD DAY', form === 'all' ? 'Dispatch overview' : esc(biz(form).name), 'Track bills and quantities for FY ' + year + '.', '<div class="head-actions">' + (can('bill') ? '<button class="button button-primary" data-action="new-bill">＋ Create bill</button>' : '') + '</div>') + tabs() +
-      '<section class="stats-grid">' + stat('Bills this financial year', current.length, 'Across FY ' + year, '▤') + stat('Items dispatched', itemLines, 'Bill line items this FY', '↗') + stat('Products in catalog', p.length, 'Across selected forms', '◫') + stat('Saved customers', c.length, 'Across selected forms', '♙') + '</section>' +
+      '<section class="stats-grid">' + stat('Bills this financial year', current.length, 'Across FY ' + year, '▤') + stat('Items dispatched', itemLines, 'Bill line items this FY', '↗') + stat('Products in catalog', p.length, 'Across all forms', '◫') + stat('Saved customers', c.length, 'Across selected forms', '♙') + '</section>' +
       (can('bill') ? '<div class="quick-grid">' + BIZ.map(b => '<article class="form-card"><span class="form-code">' + b.prefix + '</span><h3>' + esc(b.name) + '</h3><p>Start a dispatch bill. Numbering is separate for this form.</p><button class="button button-light button-small" data-action="new-bill" data-form="' + b.id + '">Create bill →</button></article>').join('') + '</div>' : '') +
       '<section class="panel activity-panel"><div class="panel-head"><div><div class="panel-title">Recent bills</div><div class="panel-caption">Latest dispatches</div></div><button class="button button-light button-small" data-action="goto-bills">View all bills →</button></div>' + billTable(recent, form === 'all') + '</section>';
   }
@@ -169,10 +169,10 @@ import { firebaseConfig } from './firebase-config.js';
   }
   async function renderCatalog() {
     const res = await Promise.all([all('products'),all('customers')]), products=res[0], customers=res[1], list=catalog==='products'?products:customers;
-    const shown = list.filter(r => (form==='all'||r.businessId===form) && (!catalogSearch || (r.name+' '+(r.note||'')).toLowerCase().includes(catalogSearch.toLowerCase())));
-    const label = catalog==='products'?'product':'customer', records = shown.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>'+(catalog==='products'?'PRODUCT':'CUSTOMER')+'</th><th>FORM</th><th>'+(catalog==='products'?'UNIT':'CONTACT / NOTE')+'</th><th>ADDED</th><th></th></tr></thead><tbody>'+shown.map(r => '<tr><td><div class="row-title"><span class="avatar">'+esc(r.name.slice(0,1).toUpperCase())+'</span><span class="strong-cell">'+esc(r.name)+'</span>'+(r.isSample?'<span class="tag gray">SAMPLE</span>':'')+(catalog==='products'&&r.brand?'<span class="tag gray">'+esc(r.brand)+'</span>':'')+'</div></td><td>'+chip(r.businessId)+'</td><td class="muted-cell">'+esc(catalog==='products'?(r.unit||'—'):(r.note||'—'))+'</td><td class="muted-cell">'+dateLabel(r.createdAt.slice(0,10))+'</td><td>'+(catalog==='customers'?'<button class="icon-button" data-action="customer-register" data-name="'+esc(r.name)+'" title="In / Out register">\u21a9</button>':'')+(can('catalog')?'<button class="icon-button" data-action="edit-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Edit">✎</button>':'')+(can('delete')?'<button class="icon-button" data-action="delete-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Delete">⌫</button>':'')+'</td></tr>').join('')+'</tbody></table></div>' : empty('No '+catalog+' yet','Add '+(catalog==='products'?'products dispatched from this form':'the people who receive products from this form')+'. They will be searchable on bills.', can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '');
-    $('#page-content').innerHTML = head('MASTER LISTS','Products & customers','Each form has its own searchable lists.','<div class="head-actions">' + (can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '') + '</div>')+tabs()+
-      '<div class="tabs-underline"><button class="underline-tab '+(catalog==='products'?'active':'')+'" data-catalog-tab="products">Products ('+products.filter(r=>form==='all'||r.businessId===form).length+')</button><button class="underline-tab '+(catalog==='customers'?'active':'')+'" data-catalog-tab="customers">Customers ('+customers.filter(r=>form==='all'||r.businessId===form).length+')</button></div><section class="panel" style="margin-top:15px"><div class="toolbar" style="padding:14px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="catalog-search" class="input" placeholder="Search '+catalog+'…" value="'+esc(catalogSearch)+'"></div><span class="tag gray">'+shown.length+' records</span></div></div>'+records+'</section>';
+    const shown = list.filter(r => (catalog==='products'||form==='all'||r.businessId===form) && (!catalogSearch || (r.name+' '+(r.note||'')).toLowerCase().includes(catalogSearch.toLowerCase())));
+    const label = catalog==='products'?'product':'customer', records = shown.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>'+(catalog==='products'?'PRODUCT':'CUSTOMER')+'</th><th>'+(catalog==='products'?'BRAND':'FORM')+'</th><th>'+(catalog==='products'?'UNIT':'CONTACT / NOTE')+'</th><th>ADDED</th><th></th></tr></thead><tbody>'+shown.map(r => '<tr><td><div class="row-title"><span class="avatar">'+esc(r.name.slice(0,1).toUpperCase())+'</span><span class="strong-cell">'+esc(r.name)+'</span>'+(r.isSample?'<span class="tag gray">SAMPLE</span>':'')+'</div></td><td>'+(catalog==='products'?esc(r.brand||'—'):chip(r.businessId))+'</td><td class="muted-cell">'+esc(catalog==='products'?(r.unit||'—'):(r.note||'—'))+'</td><td class="muted-cell">'+dateLabel(r.createdAt.slice(0,10))+'</td><td>'+(catalog==='customers'?'<button class="icon-button" data-action="customer-register" data-name="'+esc(r.name)+'" title="In / Out register">\u21a9</button>':'')+(can('catalog')?'<button class="icon-button" data-action="edit-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Edit">✎</button>':'')+(can('delete')?'<button class="icon-button" data-action="delete-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Delete">⌫</button>':'')+'</td></tr>').join('')+'</tbody></table></div>' : empty('No '+catalog+' yet','Add '+(catalog==='products'?'products dispatched from this form':'the people who receive products from this form')+'. They will be searchable on bills.', can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '');
+    $('#page-content').innerHTML = head('MASTER LISTS','Products & customers','Products are shared across all forms. Customers belong to their form.','<div class="head-actions">' + (can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '') + '</div>')+tabs()+
+      '<div class="tabs-underline"><button class="underline-tab '+(catalog==='products'?'active':'')+'" data-catalog-tab="products">Products ('+products.length+')</button><button class="underline-tab '+(catalog==='customers'?'active':'')+'" data-catalog-tab="customers">Customers ('+customers.filter(r=>form==='all'||r.businessId===form).length+')</button></div><section class="panel" style="margin-top:15px"><div class="toolbar" style="padding:14px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="catalog-search" class="input" placeholder="Search '+catalog+'…" value="'+esc(catalogSearch)+'"></div><span class="tag gray">'+shown.length+' records</span></div></div>'+records+'</section>';
   }
   function startDate(scope) {
     const n=new Date();
@@ -211,10 +211,10 @@ import { firebaseConfig } from './firebase-config.js';
   function go(p){page=p;render().catch(e=>{console.error(e);toast('Could not load this page.',true);});}
   function billDialog(data, editMode) {
     Promise.all([all('products'),all('customers')]).then(res=>{
-      const products=res[0].filter(x=>x.businessId===data.businessId), customers=res[1].filter(x=>x.businessId===data.businessId);const brandMap={};res[0].forEach(p=>{brandMap[(p.businessId||'')+'|'+String(p.name||'').toLowerCase()]=p.brand||'';});
+      const products=res[0].filter(x=>x.businessId===data.businessId), customers=res[1].filter(x=>x.businessId===data.businessId);const brandMap={};res[0].forEach(p=>{brandMap[String(p.name||'').trim().toLowerCase()]=p.brand||'';});
       const isSaved=!!data.billNumber, editing=isSaved&&!!editMode&&can('bill');
       const lockCore=isSaved, lockFields=isSaved&&!editing;
-      const rows=data.items.map(i=>{const brv=i.brand!=null&&i.brand!==''?i.brand:(brandMap[(data.businessId||'')+'|'+String(i.productName||'').toLowerCase()]||'');return '<div class="item-row"><input class="input" data-field="productName" value="'+esc(i.productName)+'" placeholder="Search product" required '+(lockFields?'readonly':'')+'><input class="input" data-field="brand" value="'+esc(brv)+'" placeholder="brand" '+(lockFields?'readonly':'')+'><input class="input" type="number" min="0" step="any" data-field="price" value="'+esc(i.price==null?'':i.price)+'" placeholder="price"><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity)+'" placeholder="0" required '+(lockFields?'readonly':'')+'><input class="input" data-field="unit" value="'+esc(i.unit)+'" placeholder="e.g. bag" required '+(lockFields?'readonly':'')+'>'+(lockFields?'':'<button class="icon-button remove-item" type="button" data-action="remove-item">×</button>')+'</div>';}).join('');
+      const rows=data.items.map(i=>{const brv=i.brand!=null&&i.brand!==''?i.brand:(brandMap[String(i.productName||'').trim().toLowerCase()]||'');return '<div class="item-row"><input class="input" data-field="productName" value="'+esc(i.productName)+'" placeholder="Search product" required '+(lockFields?'readonly':'')+'><input class="input" data-field="brand" value="'+esc(brv)+'" placeholder="brand" '+(lockFields?'readonly':'')+'><input class="input" type="number" min="0" step="any" data-field="price" value="'+esc(i.price==null?'':i.price)+'" placeholder="price"><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity)+'" placeholder="0" required '+(lockFields?'readonly':'')+'><input class="input" data-field="unit" value="'+esc(i.unit)+'" placeholder="e.g. bag" required '+(lockFields?'readonly':'')+'>'+(lockFields?'':'<button class="icon-button remove-item" type="button" data-action="remove-item">×</button>')+'</div>';}).join('');
       const total=data.items.reduce((s,i)=>s+(Number(i.price)>0?Number(i.price)*Number(i.quantity||0):0),0);
       $('#bill-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">'+(editing?'EDIT RECORD':(isSaved?'DISPATCH RECORD':'NEW DISPATCH'))+'</div><h2>'+(isSaved?esc(data.billNumber):'Create a bill')+'</h2><p>'+esc(biz(data.businessId).name)+' · '+(isSaved?'FY '+esc(data.financialYear):'Number assigned when saved for FY '+fy(data.date))+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div>'+
        '<form id="bill-form"><input type="hidden" name="billId" value="'+(isSaved?esc(data.id):'')+'"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><input type="hidden" id="bill-business" name="businessId" value="'+esc(data.businessId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(data.businessId===b.id?' active':'')+'" data-action="pick-business" data-id="'+b.id+'" '+(lockCore?'disabled':'')+'>'+esc(b.name)+'</button>').join('')+'</div></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(lockCore?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" name="customerName" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(lockFields?'readonly':'')+'</div>'+(editing?'<div class="full"><label class="field-label">BILL NO.</label><input id="bill-no" class="input" name="billNumber" value="'+esc(data.billNumber)+'" required></div>':'')+'</div>'+
@@ -228,7 +228,7 @@ import { firebaseConfig } from './firebase-config.js';
   function newBill(key) { const businessId=key||(form==='all'?'sampurn':form); billDialog({businessId,date:today(),customerName:'',items:[{productName:'',quantity:'',unit:''}],notes:''}); $('#bill-dialog').showModal(); }
   function recordDialog(kind, key, existing) {
     const product=kind==='products', bizId=key||(existing&&existing.businessId)||(form==='all'?'sampurn':form);
-    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>This record belongs to the selected form only.</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid"><div class="full"><label class="field-label">FORM</label><input type="hidden" name="businessId" value="'+esc(bizId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(b.id===bizId?' active':'')+'" data-action="pick-record-business" data-id="'+b.id+'">'+esc(b.name)+'</button>').join('')+'</div></div><div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div><div class="full"><label class="field-label">BRAND <span style="font-weight:400">(optional)</span></label><input class="input" name="brand" value="'+esc(existing&&existing.brand||'')+'" placeholder="e.g. Fortune"></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
+    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>'+(product?'Products are shared across all forms.':'This record belongs to the selected form only.')+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid">'+(product?'<div class="full"><div class="helper-box">Products are shared across all forms. Add a product once and it is available in every form.</div><input type="hidden" name="businessId" value="'+esc(bizId)+'"></div>':'<div class="full"><label class="field-label">FORM</label><input type="hidden" name="businessId" value="'+esc(bizId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(b.id===bizId?' active':'')+'" data-action="pick-record-business" data-id="'+b.id+'">'+esc(b.name)+'</button>').join('')+'</div></div>')+'<div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div><div class="full"><label class="field-label">BRAND <span style="font-weight:400">(optional)</span></label><input class="input" name="brand" value="'+esc(existing&&existing.brand||'')+'" placeholder="e.g. Fortune"></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
     $('#record-dialog').showModal();
   }
   async function backup() {
@@ -251,6 +251,18 @@ import { firebaseConfig } from './firebase-config.js';
     if(!confirm('Restore '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers? Current records on this computer will be replaced.'))return;
     await new Promise((resolve,reject)=>{const tx=db.transaction(['bills','counters','products','customers'],'readwrite');['bills','counters','products','customers'].forEach(k=>{const s=tx.objectStore(k);s.clear();data[k].forEach(x=>s.put(x));});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
     localStorage.setItem('kiranaDeskLastBackup',data.exportedAt||new Date().toISOString()); localStorage.setItem('kiranaDeskSampleSeeded','yes'); scheduleAutoBackup(); toast('Backup restored.'); render();
+  }
+  async function unifyProducts() {
+    if(localStorage.getItem('kiranaDeskProductsUnified'))return;
+    const rows=await all('products');const groups={};
+    rows.forEach(pr=>{const k=String(pr.name||'').trim().toLowerCase();if(!k)return;(groups[k]=groups[k]||[]).push(pr);});
+    for(const k in groups){const g=groups[k];if(g.length<2)continue;
+      g.sort((a,b)=>(a.isSample?1:0)-(b.isSample?1:0)||String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+      const keep=g[0];
+      for(const d of g.slice(1)){if(!keep.unit&&d.unit)keep.unit=d.unit;if(!keep.brand&&d.brand)keep.brand=d.brand;await del('products',d.id);}
+      keep.unit=keep.unit||'';keep.brand=keep.brand||'';await put('products',keep);
+    }
+    localStorage.setItem('kiranaDeskProductsUnified','yes');
   }
   async function seedSamples() {
     if(localStorage.getItem('kiranaDeskSampleSeeded'))return;
@@ -359,8 +371,8 @@ import { firebaseConfig } from './firebase-config.js';
     const bb = biz(b.businessId);
     all('products').then(products => {
       const brandMap = {};
-      products.forEach(p => { brandMap[(p.businessId || '') + '|' + String(p.name || '').toLowerCase()] = p.brand || ''; });
-      const brandOf = i => brandMap[(b.businessId || '') + '|' + String(i.productName || '').toLowerCase()] || '';
+      products.forEach(p => { brandMap[String(p.name || '').trim().toLowerCase()] = p.brand || ''; });
+      const brandOf = i => brandMap[String(i.productName || '').trim().toLowerCase()] || '';
       const money = v => new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v) || 0);
       const anyPrice = b.items.some(i => Number(i.price) > 0);
       const showPrice = !!withPrice && anyPrice;
@@ -435,7 +447,10 @@ import { firebaseConfig } from './firebase-config.js';
       const b=document.createElement('button'); b.type='button'; b.className='suggestion'; b.textContent=v;
       const pick=e=>{e.preventDefault();input.value=v;input.dispatchEvent(new Event('change',{bubbles:true}));closeSug();input.focus();};
       b.addEventListener('mousedown',pick);
-      b.addEventListener('touchstart',pick,{passive:false});
+      let tsy=null,tmoved=false;
+      b.addEventListener('touchstart',e=>{tsy=e.touches[0].clientY;tmoved=false;},{passive:true});
+      b.addEventListener('touchmove',e=>{if(tsy!=null&&Math.abs(e.touches[0].clientY-tsy)>10)tmoved=true;},{passive:true});
+      b.addEventListener('touchend',e=>{if(tsy!=null&&!tmoved){e.preventDefault();pick(e);}},false);
       box.append(b);
     });
     const host=input.closest('dialog')||document.body;host.append(box);
@@ -447,7 +462,7 @@ import { firebaseConfig } from './firebase-config.js';
   }
   function sugValuesFor(input){
     if(input.id==='bill-customer')return all('customers').then(rows=>rows.filter(x=>form==='all'||x.businessId===(($('#bill-business')||{}).value)||x.businessId===undefined).map(x=>x.name));
-    if(input.dataset.field==='productName')return all('products').then(rows=>rows.filter(x=>x.businessId===(($('#bill-business')||{}).value)||x.businessId===undefined).map(x=>x.name));
+    if(input.dataset.field==='productName')return all('products').then(rows=>{const seen={},out=[];rows.forEach(x=>{const k=String(x.name||'').trim().toLowerCase();if(k&&!seen[k]){seen[k]=true;out.push(String(x.name).trim());}});return out;});
     if(input.dataset.field==='unit')return Promise.resolve(['bag','kg','g','litre','box','piece','quintal','tonne','packet','dozen']);
     return Promise.resolve([]);
   }
@@ -455,7 +470,7 @@ import { firebaseConfig } from './firebase-config.js';
   document.addEventListener('focusin',e=>maybeSug(e.target));
   document.addEventListener('input',e=>{ if(e.target&&(e.target.id==='bill-customer'||e.target.dataset.field==='productName'||e.target.dataset.field==='unit')){ if(e.target.value.trim()===''){maybeSug(e.target);}else{sugValuesFor(e.target).then(vals=>openSug(e.target,vals));} } });
   document.addEventListener('click',e=>{ if(sugBox&&!e.target.closest('.sug-fixed'))closeSug(); },true);
-  window.addEventListener('scroll',closeSug,true);
+  window.addEventListener('scroll',e=>{if(sugBox&&sugBox.contains(e.target))return;closeSug();},true);
   document.addEventListener('click', e=>{
     const p=e.target.closest('[data-page]'); if(p){page=p.dataset.page;render();return;}
     const t=e.target.closest('[data-business]'); if(t){form=t.dataset.business;render();return;}
@@ -503,7 +518,7 @@ import { firebaseConfig } from './firebase-config.js';
     if(e.target.id==='bill-period'){period=e.target.value;renderBills();}
     if(e.target.id==='analytics-period'){analyticsPeriod=e.target.value;renderAnalytics();}
     if(e.target.id==='bill-business'){const key=e.target.value;billDialog({businessId:key,date:$('#bill-date').value,customerName:$('#bill-customer').value,items:$$('.item-row',$('#bill-items')).map(r=>Object.fromEntries($$('[data-field]',r).map(i=>[i.dataset.field,i.value]))),notes:$('#bill-notes').value,photo:$('#bill-photo-value')?$('#bill-photo-value').value:'',gst:$('#bill-gst')?$('#bill-gst').value:''});}
-    if(e.target.dataset.field==='productName'){const name=e.target.value.trim().toLowerCase(), row=e.target.closest('.item-row'), selectedBusiness=$('#bill-business')?.value;all('products').then(items=>{const item=items.find(p=>p.businessId===selectedBusiness&&p.name.toLowerCase()===name);const unit=$('[data-field="unit"]',row);if(item&&item.unit&&unit&&!unit.value)unit.value=item.unit;const brIn=$('[data-field="brand"]',row);if(item&&brIn&&!brIn.value)brIn.value=item.brand||'';});}
+    if(e.target.dataset.field==='productName'){const name=e.target.value.trim().toLowerCase(), row=e.target.closest('.item-row'), selectedBusiness=$('#bill-business')?.value;all('products').then(items=>{const matches=items.filter(p=>p.name.toLowerCase()===name);const item=matches.find(p=>p.brand)||matches[0];const unit=$('[data-field="unit"]',row);if(item&&item.unit&&unit&&!unit.value)unit.value=item.unit;const brIn=$('[data-field="brand"]',row);if(item&&brIn&&!brIn.value)brIn.value=item.brand||'';});}
     if(e.target.id==='bill-photo-input'&&e.target.files[0]){const f=e.target.files[0],area=$('#bill-photo-area'),editable=area&&area.dataset.editable!=='no';toast('Preparing photo…');compressImage(f).then(d=>{const v=$('#bill-photo-value');if(v)v.value=d;renderPhotoArea(d,editable);toast('Photo attached.');}).catch(()=>toast('Could not attach that photo.',true));e.target.value='';}
     if(e.target.id==='backup-file'&&e.target.files[0])restore(e.target.files[0]).catch(err=>{console.error(err);toast(err.message||'Could not restore backup.',true);e.target.value='';});
   });
@@ -512,7 +527,7 @@ import { firebaseConfig } from './firebase-config.js';
       e.preventDefault();const f=new FormData(e.target), kind=f.get('kind'), oldId=f.get('recordId'), prior=oldId?(await all(kind)).find(x=>x.id===oldId):null, r={id:oldId||uid(),businessId:f.get('businessId'),name:String(f.get('name')).trim(),createdAt:prior?prior.createdAt:new Date().toISOString()};
       if(prior&&prior.isSample&&prior.name===r.name)r.isSample=true;
       if(kind==='products'){r.unit=String(f.get('unit')||'').trim();r.brand=String(f.get('brand')||'').trim();await put('products',r);}else{r.note=String(f.get('note')||'').trim();await put('customers',r);}
-      $('#record-dialog').close();toast('Saved to this form.');render();
+      $('#record-dialog').close();toast(kind==='products'?'Saved. Products are shared across all forms.':'Saved to this form.');render();
     }
     if(e.target.id==='bill-form'){
       e.preventDefault();const rows=$$('.item-row',e.target), items=rows.map(r=>{const pr=$('[data-field="price"]',r),brEl=$('[data-field="brand"]',r);return {productName:$('[data-field="productName"]',r).value.trim(),brand:brEl?String(brEl.value||'').trim():'',quantity:Number($('[data-field="quantity"]',r).value),unit:$('[data-field="unit"]',r).value.trim(),price:pr&&pr.value!==''?Number(pr.value):null};});
@@ -552,7 +567,7 @@ import { firebaseConfig } from './firebase-config.js';
           try{const users=await window.KiranaCloud.list('users');const mine=users.find(u=>u.id===user.email);if(mine&&ROLES[mine.role])role=mine.role;else{role='owner';roleDialog(user.email);}}catch(e){role='owner';}
           applyRole();
           try{
-            await reconcileCloud();await seedSamples();
+            await reconcileCloud();await seedSamples();await unifyProducts();
             subscriptions=window.KiranaCloud.listen(async(store,records)=>{
               await replaceLocal(store,records);
               if(document.visibilityState==='visible')render().catch(console.warn);
@@ -560,7 +575,7 @@ import { firebaseConfig } from './firebase-config.js';
             await render();
           }catch(error){console.error(error);toast('Could not load shared records. Check the Firebase setup.',true);}
         });
-      }else{await seedSamples();$('#online-label').textContent=navigator.onLine?'Local only':'Working offline';await render();}
+      }else{await seedSamples();await unifyProducts();$('#online-label').textContent=navigator.onLine?'Local only':'Working offline';await render();}
       if('serviceWorker'in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').catch(console.info);
     }
     catch(err){console.error(err);$('#page-content').innerHTML=empty('Local storage unavailable','Open the app through a local web server or secure website. Browser storage is unavailable in this page context.');}
