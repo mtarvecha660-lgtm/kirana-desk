@@ -6,7 +6,7 @@ import { firebaseConfig } from './firebase-config.js';
   const BIZ = [
     { id: 'sampurn', name: 'Riddhi Siddhi Store', prefix: 'SK', color: '#a5cc62', addr: 'Kalakhet, Mandsaur', gstin: '23AEZPT3880L1ZI', bank1: 'SBI Bank A/c. No.31452441452', bank2: 'IFSC Code. SBIN0030099' },
     { id: 'surya', name: 'Surya Supplies', prefix: 'SS', color: '#76b7a6' },
-    { id: 'dhanraj', name: 'Dhanraj Products', prefix: 'DP', color: '#d1a66c' }
+    { id: 'dhanraj', name: 'Sampurn Kirana Shop', prefix: 'DP', color: '#d1a66c' }
   ];
   const names = { dashboard: 'Overview', bills: 'Dispatch records', catalog: 'Products & customers', analytics: 'Analytics', supply: 'Supply orders', backup: 'Backup & restore' };
   const $ = (s, root = document) => root.querySelector(s);
