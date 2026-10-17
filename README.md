@@ -1,6 +1,6 @@
 # Kirana Desk
 
-An offline-capable digital dispatch register and analytics tool for Sampurn Kirana, Surya Supplies, and Dhanraj Products. It is designed to replace searching through a paper bill book when reviewing activity; it does not need to print anything.
+An offline-capable digital dispatch register and analytics tool for Riddhi Siddhi Store, Surya Supplies, and Dhanraj Products. It is designed to replace searching through a paper bill book when reviewing activity; it does not need to print anything.
 
 ## Included
 
