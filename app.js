@@ -4,9 +4,9 @@ import { firebaseConfig } from './firebase-config.js';
 (() => {
   'use strict';
   const BIZ = [
-    { id: 'sampurn', name: 'Riddhi Siddhi Store', prefix: 'SK', color: '#a5cc62', addr: 'Kalakhet, Mandsaur', gstin: '23AEZPT3880L1ZI', bank1: 'SBI Bank A/c. No.31452441452', bank2: 'IFSC Code. SBIN0030099' },
+    { id: 'sampurn', name: 'Riddhi Siddhi Store', prefix: 'RS', color: '#a5cc62', addr: 'Kalakhet, Mandsaur', gstin: '23AEZPT3880L1ZI', bank1: 'SBI Bank A/c. No.31452441452', bank2: 'IFSC Code. SBIN0030099' },
     { id: 'surya', name: 'Surya Supplies', prefix: 'SS', color: '#76b7a6' },
-    { id: 'dhanraj', name: 'Sampurn Kirana Shop', prefix: 'DP', color: '#d1a66c' }
+    { id: 'dhanraj', name: 'Sampurn Kirana Shop', prefix: 'SK', color: '#d1a66c' }
   ];
   const names = { dashboard: 'Overview', bills: 'Dispatch records', catalog: 'Products & customers', analytics: 'Analytics', supply: 'Supply orders', backup: 'Backup & restore' };
   const $ = (s, root = document) => root.querySelector(s);
@@ -508,8 +508,8 @@ import { firebaseConfig } from './firebase-config.js';
   function photoView(src, id) {
     $('#bill-dialog').innerHTML = '<div class="modal-head"><div><div class="eyebrow">ATTACHMENT</div><h2>Bill photo</h2></div><button class="icon-button" data-action="close-dialog">✕</button></div><div class="modal-body"><div class="photo-view"><img src="' + src + '" alt="Bill photo"></div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px">' + (id ? '<button class="button button-light" type="button" data-action="back-to-bill" data-id="' + esc(id) + '">← Back</button>' : '') + '<button class="button button-primary" type="button" data-action="close-dialog">Close</button></div></div>';
   }
-  let sugBox=null;
-  function closeSug(){ if(sugBox){sugBox.remove();sugBox=null;} }
+  let sugBox=null, sugItems=[], sugIdx=-1;
+  function closeSug(){ if(sugBox){sugBox.remove();sugBox=null;} sugItems=[]; sugIdx=-1; }
   function openSug(input, values){
     closeSug();
     const q=input.value.trim().toLowerCase();
@@ -532,8 +532,23 @@ import { firebaseConfig } from './firebase-config.js';
     let top=rect.bottom+4;
     if(top+bh>window.innerHeight-8)top=Math.max(8,rect.top-bh-4);
     box.style.top=top+'px'; box.style.left=Math.max(8,rect.left)+'px'; box.style.width=rect.width+'px';
-    sugBox=box;
+    sugBox=box; sugItems=Array.prototype.slice.call(box.querySelectorAll('.suggestion')); sugIdx=-1;
   }
+  document.addEventListener('keydown',e=>{
+    if(!sugBox||!sugItems.length)return;
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      if(sugIdx<0)sugIdx=e.key==='ArrowDown'?0:sugItems.length-1;
+      else sugIdx=(sugIdx+(e.key==='ArrowDown'?1:-1)+sugItems.length)%sugItems.length;
+      sugItems.forEach((b,i)=>b.classList.toggle('active',i===sugIdx));
+      sugItems[sugIdx].scrollIntoView({block:'nearest'});
+    }else if(e.key==='Enter'&&sugIdx>=0){
+      e.preventDefault();
+      sugItems[sugIdx].dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
+    }else if(e.key==='Escape'){
+      closeSug();
+    }
+  });
   function sugValuesFor(input){
     if(input.id==='bill-customer')return all('customers').then(rows=>rows.filter(x=>form==='all'||x.businessId===(($('#bill-business')||{}).value)||x.businessId===undefined).map(x=>x.name));
     if(input.id==='so-customer')return all('customers').then(rows=>{const seen={},out=[];rows.forEach(x=>{const k=String(x.name||'').trim().toLowerCase();if(k&&!seen[k]){seen[k]=true;out.push(String(x.name).trim());}});return out;});

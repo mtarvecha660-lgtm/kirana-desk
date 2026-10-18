@@ -58,7 +58,7 @@ if (!configured) {
         ? new Date(data.date + 'T12:00:00').getFullYear()
         : new Date(data.date + 'T12:00:00').getFullYear() - 1;
       const year = startYear + '-' + String(startYear + 1).slice(-2);
-      const prefix = { sampurn: 'SK', surya: 'SS', dhanraj: 'DP' }[data.businessId] || 'SK';
+      const prefix = { sampurn: 'RS', surya: 'SS', dhanraj: 'SK' }[data.businessId] || 'SK';
       const counterId = data.businessId + ':' + year;
       const counterRef = docFor('counters', counterId);
       const billRef = docFor('bills', data.id);

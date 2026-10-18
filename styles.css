@@ -12,3 +12,5 @@
 
 .so-preview{max-width:100%;max-height:340px;border-radius:10px;cursor:zoom-in;display:block}
 .pdf-chip{display:inline-block;padding:6px 12px;border:1.5px solid #111;border-radius:8px;background:#fffef5;font-weight:600}
+
+.suggestion.active{background:#e9f1de}
