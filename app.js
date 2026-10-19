@@ -21,6 +21,7 @@ import { firebaseConfig } from './firebase-config.js';
   let db, page = 'dashboard', form = 'all', catalog = 'products', search = '', catalogSearch = '', period = 'all', analyticsPeriod = 'fy';
   const ROLES = { owner:['bill','catalog','delete','analytics','backup'], entry:['bill','catalog','analytics'], analyst:['analytics'] };
   let role = 'owner', backupDir = null, autoEnabled = false, autoTimer = null;
+  let backupPromptShown = false;
   const can = w => (ROLES[role] || ROLES.owner).includes(w);
   function applyRole(){ const top = $('#new-bill-top'); if(top) top.hidden = !can('bill'); }
   function roleDialog(email){
@@ -49,7 +50,7 @@ import { firebaseConfig } from './firebase-config.js';
       backupDir = h; await saveSetting('backupDir', h);
       const q = await h.queryPermission({ mode:'readwrite' });
       if(q === 'granted'){ autoEnabled = true; await writeAutoBackup('folder-set'); }
-      toast('Auto backup folder set. Records will be copied there after every change.');
+      toast('Auto backup folder set. New records will be saved there as they come.');
       if(page === 'backup') render();
     }catch(e){ /* folder picker cancelled */ }
   }
@@ -62,13 +63,13 @@ import { firebaseConfig } from './firebase-config.js';
     try{
       const q = await backupDir.queryPermission({ mode:'readwrite' });
       if(q !== 'granted'){ autoEnabled = false; return; }
-      const r = await Promise.all([all('bills'), all('counters'), all('products'), all('customers')]);
-      const data = { app:'Kirana Desk', schemaVersion:1, exportedAt:new Date().toISOString(), auto:true, reason:reason, bills:r[0], counters:r[1], products:r[2], customers:r[3] };
-      const fh = await backupDir.getFileHandle('kirana-desk-backup-' + today() + '.json', { create:true });
+      const b = await buildIncremental(reason);
+      if(!b) return;
+      const fh = await backupDir.getFileHandle('kirana-desk-backup-' + today() + '-' + backupStamp() + '.json', { create:true });
       const w = await fh.createWritable();
-      await w.write(new Blob([JSON.stringify(data, null, 2)], { type:'application/json' }));
+      await w.write(new Blob([JSON.stringify(b.data, null, 2)], { type:'application/json' }));
       await w.close();
-      localStorage.setItem('kiranaDeskLastBackup', new Date().toISOString());
+      applyBackupMarks(b.marks);
       if(page === 'backup') render();
     }catch(e){ console.warn('Automatic backup failed this time.', e); }
   }
@@ -104,6 +105,7 @@ import { firebaseConfig } from './firebase-config.js';
     return localAll(store);
   }
   async function put(store, value) {
+    value = Object.assign({}, value, { updatedAt: new Date().toISOString() });
     await putLocal(store,value);scheduleAutoBackup();
     if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user)window.KiranaCloud.write(store,value).catch(error=>{console.warn('Cloud write is queued or unavailable.',error);$('#online-label').textContent='Sync pending';});
     return value;
@@ -212,14 +214,14 @@ import { firebaseConfig } from './firebase-config.js';
   function autoBackupPanel(){
     if(!window.showDirectoryPicker) return '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Automatic backup</div><div class="panel-caption">Needs Chrome or Edge on a computer.</div></div></div></section>';
     const auto = backupDir && autoEnabled;
-    return '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Automatic backup on this computer</div><div class="panel-caption">A fresh copy is saved here after every change, even if the shared backend fails.</div></div></div><div style="padding:19px">'+(backupDir?'<span class="tag gray">Folder: '+esc(backupDir.name)+'</span> ':'')+'<button class="button button-primary" data-action="set-backup-folder">'+(backupDir?'Change folder':'Choose auto backup folder')+'</button> '+(backupDir&&!autoEnabled?'<button class="button button-light" data-action="reallow-backup">Allow access again</button>':'')+'<p class="field-hint" style="line-height:1.6;margin-top:10px">'+(auto?'Automatic backup is on. One file per day, always the latest records inside.':'Choose the folder once. Chrome or Edge will ask for permission, then keep the copy fresh on its own.')+'</p></div></section>';
+    return '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Automatic backup on this computer</div><div class="panel-caption">A fresh copy is saved here after every change, even if the shared backend fails.</div></div></div><div style="padding:19px">'+(backupDir?'<span class="tag gray">Folder: '+esc(backupDir.name)+'</span> ':'')+'<button class="button button-primary" data-action="set-backup-folder">'+(backupDir?'Change folder':'Choose auto backup folder')+'</button> '+(backupDir&&!autoEnabled?'<button class="button button-light" data-action="reallow-backup">Allow access again</button>':'')+'<p class="field-hint" style="line-height:1.6;margin-top:10px">'+(auto?'Automatic backup is on. Every new batch of records becomes its own file. Earlier files are never rewritten.':'Choose the folder once. Chrome or Edge will ask for permission, then save every new batch of records there.')+'</p></div></section>';
   }
   async function renderBackup() {
     const res=await Promise.all([all('bills'),all('products'),all('customers')]), last=localStorage.getItem('kiranaDeskLastBackup');
     $('#page-content').innerHTML=head('DATA SAFETY','Backup & restore','Create a portable copy of the records on this computer.')+
       '<div class="notice"><strong>How your data is saved:</strong> your bills, customers, and products are stored in this browser on this computer. They work offline. Export backups to protect against device loss or cleared browser data.</div>'+
       '<section class="stats-grid" style="margin-top:16px">'+stat('Bills',res[0].length,'On this computer','▤')+stat('Products',res[1].length,'On this computer','◫')+stat('Customers',res[2].length,'On this computer','♙')+stat('Last backup',last?dateLabel(last.slice(0,10)):'Not yet',last?new Date(last).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'Export a copy now','↥')+'</section>'+
-      '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Create a backup</div><div class="panel-caption">All forms, lists, bills, and bill counters in one file.</div></div></div><div style="padding:19px"><button class="button button-primary" data-action="export-backup">↓ Download backup file</button><p class="field-hint" style="line-height:1.6">Save the file somewhere private and separate. Create a fresh copy after each day’s work.</p></div></section><section class="panel"><div class="panel-head"><div><div class="panel-title">Restore a backup</div><div class="panel-caption">Replace local records with a saved backup.</div></div></div><div style="padding:19px"><label class="button button-light" for="backup-file">Choose backup file</label><input id="backup-file" type="file" accept="application/json,.json" hidden><p class="field-hint" style="line-height:1.6">Restore replaces current local data. Export it first if you want to keep a copy.</p></div></section></section>' + autoBackupPanel() + '</div>'+
+      '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Create a backup</div><div class="panel-caption">All forms, lists, bills, and bill counters in one file.</div></div></div><div style="padding:19px"><button class="button button-primary" data-action="export-new-backup">↓ Download new records only</button><button class="button button-light" data-action="export-backup" style="margin-left:8px">Full copy</button><p class="field-hint" style="line-height:1.6">New records only saves just what is not in any earlier backup file, and the file name carries the time, so an earlier file is never rewritten. Full copy saves everything in one file.</p></div></section><section class="panel"><div class="panel-head"><div><div class="panel-title">Restore a backup</div><div class="panel-caption">Replace local records with a saved backup.</div></div></div><div style="padding:19px"><label class="button button-light" for="backup-file">Choose backup file</label><input id="backup-file" type="file" accept="application/json,.json" hidden><p class="field-hint" style="line-height:1.6">Restore replaces current local data. Export it first if you want to keep a copy.</p></div></section></section>' + autoBackupPanel() + '</div>'+
       '<div class="backup-steps"><div class="backup-step"><span class="step-number">1</span><b>Export after billing</b><p>Download a fresh copy after each work session.</p></div><div class="backup-step"><span class="step-number">2</span><b>Keep another copy</b><p>Move the file to a separate drive or your brother’s computer.</p></div><div class="backup-step"><span class="step-number">3</span><b>Restore when needed</b><p>Choose the file on the computer where you want the records.</p></div></div>';
   }
   async function render() {
@@ -250,10 +252,52 @@ import { firebaseConfig } from './firebase-config.js';
     $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>'+(product?'Products are shared across all forms.':'This record belongs to the selected form only.')+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid">'+(product?'<div class="full"><div class="helper-box">Products are shared across all forms. Add a product once and it is available in every form.</div><input type="hidden" name="businessId" value="'+esc(bizId)+'"></div>':'<div class="full"><label class="field-label">FORM</label><input type="hidden" name="businessId" value="'+esc(bizId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(b.id===bizId?' active':'')+'" data-action="pick-record-business" data-id="'+b.id+'">'+esc(b.name)+'</button>').join('')+'</div></div>')+'<div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div><div class="full"><label class="field-label">BRAND <span style="font-weight:400">(optional)</span></label><input class="input" name="brand" value="'+esc(existing&&existing.brand||'')+'" placeholder="e.g. Fortune"></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
     $('#record-dialog').showModal();
   }
+  function backupManifest(){ try{ return JSON.parse(localStorage.getItem('kiranaDeskBackupManifest')||'{}'); }catch(e){ return {}; } }
+  function stampOf(r){ return String(r.updatedAt||r.createdAt||''); }
+  async function unbackedCounts(){
+    const stores=['bills','counters','products','customers','supplyorders'], m=backupManifest();
+    const sets=await Promise.all(stores.map(s=>all(s)));
+    const counts={}; let total=0;
+    stores.forEach((s,i)=>{ const got=m[s]||{}; counts[s]=sets[i].filter(r=>got[String(r.id)]!==stampOf(r)); total+=counts[s].length; });
+    return { counts:counts, total:total };
+  }
+  async function buildIncremental(reason){
+    const c=await unbackedCounts();
+    if(!c.total) return null;
+    const counters=c.counts.bills.length?await all('counters'):[];
+    const data={app:'Kirana Desk',schemaVersion:1,exportedAt:new Date().toISOString(),incremental:true,reason:reason||'manual',bills:c.counts.bills,counters:counters,products:c.counts.products,customers:c.counts.customers,supplyorders:c.counts.supplyorders};
+    return { data:data, marks:{ bills:c.counts.bills, counters:counters, products:c.counts.products, customers:c.counts.customers, supplyorders:c.counts.supplyorders } };
+  }
+  function applyBackupMarks(marks){
+    const m=backupManifest();
+    Object.keys(marks).forEach(s=>{ m[s]=m[s]||{}; (marks[s]||[]).forEach(r=>{ m[s][String(r.id)]=stampOf(r); }); });
+    localStorage.setItem('kiranaDeskBackupManifest',JSON.stringify(m));
+    localStorage.setItem('kiranaDeskLastBackup',new Date().toISOString());
+  }
+  function backupStamp(){ const d=new Date(); return String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0'); }
+  async function backupIncremental(reason){
+    const b=await buildIncremental(reason);
+    if(!b){ toast('Everything is already backed up. No new records to save.'); return; }
+    const url=URL.createObjectURL(new Blob([JSON.stringify(b.data,null,2)],{type:'application/json'})), a=document.createElement('a'); a.href=url; a.download='kirana-desk-backup-'+today()+'-'+backupStamp()+'.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+    applyBackupMarks(b.marks); toast('Backup downloaded with only the new records. Earlier files are untouched.');
+    if(page==='backup')render();
+  }
+  function bkDlg(){ let d=$('#backup-dialog'); if(!d){ d=document.createElement('dialog'); d.id='backup-dialog'; d.className='modal'; document.body.append(d); } return d; }
+  async function maybeBackupPrompt(){
+    if(backupPromptShown||!can('backup'))return;
+    let c; try{ c=await unbackedCounts(); }catch(e){ return; }
+    if(!c.total)return;
+    backupPromptShown=true;
+    const bills=c.counts.bills.length, others=c.counts.products.length+c.counts.customers.length+c.counts.supplyorders.length;
+    const line=(bills&&others)?bills+' bills and '+others+' catalog or supply entries':(bills?bills+(bills===1?' bill':' bills'):others+(others===1?' entry':' entries'));
+    bkDlg().innerHTML='<div class="modal-head"><div><div class="eyebrow">DATA SAFETY</div><h2>Backup new records</h2><p>'+line+' on this computer are not in any backup file yet.</p></div><button class="icon-button" data-action="close-dialog">\u2715</button></div><div class="modal-body"><p style="line-height:1.6">The download carries only records not backed up before, and the file name includes the time, so an earlier backup file is never rewritten.</p></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Later</button><button class="button button-primary" type="button" data-action="quick-backup">\u2193 Backup now</button></div></div>';
+    bkDlg().showModal();
+  }
   async function backup() {
     const r=await Promise.all([all('bills'),all('counters'),all('products'),all('customers'),all('supplyorders')]), data={app:'Kirana Desk',schemaVersion:1,exportedAt:new Date().toISOString(),bills:r[0],counters:r[1],products:r[2],customers:r[3],supplyorders:r[4]};
-    const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})), a=document.createElement('a'); a.href=url; a.download='kirana-desk-backup-'+today()+'.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
-    localStorage.setItem('kiranaDeskLastBackup',new Date().toISOString()); toast('Backup downloaded. Save another copy on a separate device.'); if(page==='backup')render();
+    const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})), a=document.createElement('a'); a.href=url; a.download='kirana-desk-backup-'+today()+'-'+backupStamp()+'.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+    applyBackupMarks({ bills:r[0], counters:r[1], products:r[2], customers:r[3], supplyorders:r[4] });
+    toast('Full backup downloaded. Save another copy on a separate device.'); if(page==='backup')render();
   }
   async function exportAnalytics() {
     const start=startDate(analyticsPeriod), bills=(await all('bills')).filter(b=>(form==='all'||b.businessId===form)&&new Date(b.date+'T12:00:00')>=start);
@@ -267,8 +311,10 @@ import { firebaseConfig } from './firebase-config.js';
   async function restore(file) {
     const data=JSON.parse(await file.text());
     if(data.app!=='Kirana Desk'||data.schemaVersion!==1||!['bills','counters','products','customers'].every(k=>Array.isArray(data[k])))throw new Error('This is not a valid Kirana Desk backup.');
-    if(!confirm('Restore '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers? Current records on this computer will be replaced.'))return;
-    await new Promise((resolve,reject)=>{const tx=db.transaction(['bills','counters','products','customers','supplyorders'],'readwrite');['bills','counters','products','customers','supplyorders'].forEach(k=>{const s=tx.objectStore(k);s.clear();(Array.isArray(data[k])?data[k]:[]).forEach(x=>s.put(x));});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
+    const merge=!!data.incremental;
+    if(merge){ if(!confirm('Add '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers from this backup? Existing records on this computer are kept.'))return; }
+    else if(!confirm('Restore '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers? Current records on this computer will be replaced.'))return;
+    await new Promise((resolve,reject)=>{const tx=db.transaction(['bills','counters','products','customers','supplyorders'],'readwrite');['bills','counters','products','customers','supplyorders'].forEach(k=>{const st=tx.objectStore(k);if(!merge)st.clear();(Array.isArray(data[k])?data[k]:[]).forEach(x=>st.put(x));});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
     localStorage.setItem('kiranaDeskLastBackup',data.exportedAt||new Date().toISOString()); localStorage.setItem('kiranaDeskSampleSeeded','yes'); scheduleAutoBackup(); toast('Backup restored.'); render();
   }
   async function unifyProducts() {
@@ -640,6 +686,8 @@ import { firebaseConfig } from './firebase-config.js';
     if(x==='add-record')recordDialog(a.dataset.kind);
     if(x==='edit-record'){const store=a.dataset.kind;all(store).then(items=>{const item=items.find(r=>r.id===a.dataset.id);if(item)recordDialog(store,item.businessId,item);});}
     if(x==='export-backup')backup().catch(()=>toast('Could not create backup.',true));
+    if(x==='export-new-backup')backupIncremental('manual').catch(()=>toast('Could not create backup.',true));
+    if(x==='quick-backup'){const d=a.closest('dialog');if(d&&d.open)d.close();backupIncremental('prompt').catch(()=>toast('Could not create backup.',true));}
     if(x==='export-analytics')exportAnalytics().catch(()=>toast('Could not export this report.',true));
     if(x==='add-item')$('#bill-items').insertAdjacentHTML('beforeend','<div class="item-row"><input class="input" data-field="productName" placeholder="Search product" required><input class="input" data-field="brand" placeholder="brand"><input class="input" type="number" min="0" step="any" data-field="price" placeholder="price"><input class="input" type="number" min="0.001" step="any" data-field="quantity" placeholder="0" required><input class="input" data-field="unit" placeholder="e.g. bag" required><button class="icon-button" type="button" data-action="remove-item">×</button></div>');
     if(x==='remove-item'){const rows=$$('.item-row',$('#bill-items'));if(rows.length>1)a.closest('.item-row').remove();else toast('A bill needs one item.');}
@@ -759,6 +807,7 @@ if(e.target.id==='supply-form'){
               if(document.visibilityState==='visible')render().catch(console.warn);
             },error=>{console.warn('Cloud listener unavailable.',error);$('#online-label').textContent='Sync pending';});
             await render();
+            setTimeout(()=>maybeBackupPrompt().catch(console.warn),2500);
           }catch(error){console.error(error);toast('Could not load shared records. Check the Firebase setup.',true);}
         });
       }else{await seedSamples();await unifyProducts();$('#online-label').textContent=navigator.onLine?'Local only':'Working offline';await render();}
