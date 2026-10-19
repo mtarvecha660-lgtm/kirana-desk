@@ -239,7 +239,7 @@ import { firebaseConfig } from './firebase-config.js';
        '<form id="bill-form"><input type="hidden" name="billId" value="'+(isSaved?esc(data.id):'')+'"><input type="hidden" name="soId" value="'+esc(data.supplyOrderId||'')+'"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><input type="hidden" id="bill-business" name="businessId" value="'+esc(data.businessId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(data.businessId===b.id?' active':'')+'" data-action="pick-business" data-id="'+b.id+'" '+(lockCore?'disabled':'')+'>'+esc(b.name)+'</button>').join('')+'</div></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(lockCore?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" name="customerName" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(lockFields?'readonly':'')+'</div>'+(editing?'<div class="full"><label class="field-label">BILL NO.</label><input id="bill-no" class="input" name="billNumber" value="'+esc(data.billNumber)+'" required></div>':'')+'</div>'+
        '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(lockFields?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table bill-grid"><div class="items-table-head"><div>PRODUCT</div><div>BRAND</div><div>PRICE <span style="font-weight:400">(optional)</span></div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div></div>'+
        (isSaved&&total>0?'<div class="modal-section total-line"><span>Amount total (priced lines)</span><b>₹'+number(Math.round(total*100)/100)+'</b></div>':'')+
-       '<div class="modal-section"><label class="field-label">GST % <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-gst" class="input" type="number" min="0" max="28" step="0.01" value="'+(data.gst==null?'':data.gst)+'" placeholder="e.g. 5" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#97a29b">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div>'+(isSaved&&data.supplyOrderId?'<div class="modal-section"><span class="field-label">SUPPLY ORDER</span> <button type="button" class="button button-light button-small" data-action="open-supply" data-id="'+esc(data.supplyOrderId)+'">'+esc(soName)+'</button></div>':'')+'<div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, note, or bill number. Date stays fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price on each line is optional. No GST. Keyboard: Enter jumps to the next field, Ctrl+Enter saves.')+'</div></div>'+
+       '<div class="modal-section"><label class="field-label">GST % <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-gst" class="input" type="number" min="0" max="28" step="0.01" value="'+(data.gst==null?'':data.gst)+'" placeholder="e.g. 5" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#97a29b">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div>'+(isSaved&&data.supplyOrderId?'<div class="modal-section"><span class="field-label">SUPPLY ORDER</span> <button type="button" class="button button-light button-small" data-action="open-supply" data-id="'+esc(data.supplyOrderId)+'">'+esc(soName)+'</button></div>':'')+'<div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, note, or bill number. Date stays fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price on each line is optional. No GST. Keyboard: Enter moves through each field and option like Busy, Ctrl+Enter saves.')+'</div></div>'+
        '<div class="modal-foot">'+(isSaved&&!editing?'<button class="button button-light" type="button" data-action="print-bill" data-id="'+esc(data.id)+'">⎙ Print</button>'+(can('bill')?'<button class="button button-light" type="button" data-action="return-bill" data-id="'+esc(data.id)+'">↩ Return</button>':''):'<span class="field-hint">'+(editing?'Date stays fixed · bill number editable':'Product · price (optional) · quantity · unit')+'</span>')+'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(editing?'<button class="button button-primary" type="submit">Save changes</button>':(!isSaved?'<button class="button button-primary" type="submit">Save record</button>':(can('bill')?'<button class="button button-primary" type="button" data-action="edit-bill" data-id="'+esc(data.id)+'">Edit</button>':'')))+(isSaved&&!editing&&can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete</button>':'')+'</div></div></form>';
       renderPhotoArea(data.photo||'', !lockFields);
     }).catch(e=>{console.error(e);toast('Could not load your catalog.',true);});
@@ -570,7 +570,7 @@ import { firebaseConfig } from './firebase-config.js';
     let d=document.getElementById('kbd-help');
     if(!d){d=document.createElement('dialog');d.id='kbd-help';d.className='modal modal-narrow';document.body.append(d);}
     d.innerHTML='<div class="modal-head"><div><div class="eyebrow">KEYBOARD</div><h2>Shortcuts</h2><p>Use Kirana Desk without the mouse.</p></div><button class="icon-button" data-action="close-dialog">\u2715</button></div><div class="modal-body"><div class="metric-list">'
-      +[['Alt + 1 to 6','Switch page: Overview, Records, Supply, Catalog, Analytics, Backup'],['N','New bill (when not typing)'],['/','Focus the search box on the open page'],['Enter','Move to the next field while filling a form'],['Ctrl + Enter','Save the open form'],['Esc','Close the open window'],['Up / Down arrows','Pick from the suggestion list, Enter fills it']]
+      +[['Alt + 1 to 6','Switch page: Overview, Records, Supply, Catalog, Analytics, Backup'],['N','New bill (when not typing)'],['/','Focus the search box on the open page'],['Enter','Next field or option, Shift + Enter goes back, like Busy'],['Ctrl + Enter','Save the open form'],['Esc','Close the open window'],['Up / Down arrows','Pick from the suggestion list, Enter fills it']]
       .map(r=>'<div class="metric-row"><span class="row-title"><b>'+r[0]+'</b> \u00b7 '+r[1]+'</span></div>').join('')+'</div><p class="field-hint" style="margin-top:10px">Press ? anywhere to see this again.</p></div><div class="modal-foot"><span></span><button class="button button-primary" type="button" data-action="close-dialog">Got it</button></div>';
     d.showModal();
   }
@@ -586,19 +586,30 @@ import { firebaseConfig } from './firebase-config.js';
     if(e.altKey&&!e.ctrlKey&&!e.metaKey&&/^[1-6]$/.test(e.key)){
       e.preventDefault();const nav=$$('.nav-item[data-page]'),n=nav[Number(e.key)-1];if(n){page=n.dataset.page;render();}return;
     }
-    if(e.key==='Enter'&&typing&&t.tagName==='INPUT'&&['text','number','date',''].indexOf(t.type)>=0){
-      const dlg=t.closest('dialog');
-      if(dlg&&dlg.open){
-        const form=t.closest('form');
-        if(form&&(form.id==='bill-form'||form.id==='record-form'||form.id==='supply-form')){
-          if(e.ctrlKey||e.metaKey){e.preventDefault();if(form.requestSubmit)f_requestSubmit(form);return;}
-          e.preventDefault();closeSug();
-          const inputs=Array.prototype.slice.call(form.querySelectorAll('input:not([type=hidden]):not([disabled])')).filter(el=>el.type!=='file'&&!el.readOnly);
-          const i=inputs.indexOf(t),next=inputs[i+1];
-          if(next){next.focus();if(next.value&&next.select)next.select();}
-          return;
-        }
-      }
+    if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){
+      const dlg=document.querySelector('dialog[open]');
+      const f=dlg?dlg.querySelector('form'):null;
+      if(f){e.preventDefault();f_requestSubmit(f);return;}
+    }
+    if(e.key==='Enter'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.defaultPrevented){
+      if(sugBox&&sugIdx>=0)return;
+      if(t&&(t.tagName==='BUTTON'||t.tagName==='A'||t.tagName==='SELECT'||(t.tagName==='INPUT'&&(t.type==='checkbox'||t.type==='radio'||t.type==='file'))))return;
+      const dlg=document.querySelector('dialog[open]');
+      const root=dlg||document.body;
+      const els=Array.prototype.slice.call(root.querySelectorAll('input:not([type=hidden]):not([type=file]),button,select,textarea')).filter(el=>{
+        if(el.disabled||el.closest('.sug-fixed'))return false;
+        if(el.offsetParent===null){const cs=getComputedStyle(el);if(cs.position!=='fixed')return false;}
+        return true;
+      });
+      if(!els.length)return;
+      let i=els.indexOf(document.activeElement);
+      e.preventDefault();closeSug();
+      if(i<0){els[0].focus();return;}
+      const dir=e.shiftKey?-1:1;
+      const next=els[(i+dir+els.length)%els.length];
+      next.focus();
+      if(next.value&&next.select)next.select();
+      return;
     }
     if(typing)return;
     if(e.key==='/'){e.preventDefault();const s=$('#bill-search')||$('#catalog-search')||$('#so-search');if(s){s.focus();if(s.select)s.select();}return;}
