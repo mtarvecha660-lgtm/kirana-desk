@@ -14,3 +14,7 @@
 .pdf-chip{display:inline-block;padding:6px 12px;border:1.5px solid #111;border-radius:8px;background:#fffef5;font-weight:600}
 
 .suggestion.active{background:#e9f1de}
+
+/* keyboard focus ring (Busy-style entry) */
+.button:focus-visible,.icon-button:focus-visible,.pick-chip:focus-visible,.nav-item:focus-visible,.business-tab:focus-visible,.underline-tab:focus-visible,.tag:focus-visible,input[type=checkbox]:focus-visible{outline:3px solid #2f6f57;outline-offset:2px}
+.suggestion.active{background:#e7f0eb;outline:2px solid #2f6f57;outline-offset:-2px}

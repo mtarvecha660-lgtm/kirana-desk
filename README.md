@@ -11,6 +11,39 @@ An offline-capable digital dispatch register and analytics tool for Riddhi Siddh
 - Clearly marked sample products and customer names for each form on a fresh install. Edit or remove these from Products & customers.
 - Browser-local IndexedDB storage and manual JSON backup/restore.
 
+## Keyboard (Busy-style entry)
+
+Every page works without the mouse. Press **?** in the app to see this list.
+
+| Key | What it does |
+| --- | --- |
+| Enter | Next field. Never presses a delete/remove button. |
+| Enter on the last field of the last item line | Adds exactly **one** new line and puts the cursor in its Product box |
+| Enter on an empty Product line | Finishes the items and jumps to GST / Note; empty lines are ignored when saving |
+| Enter on the last field of a window | Goes to the Save button (Enter again saves) |
+| Shift + Enter | Previous field |
+| Up / Down, then Enter | Pick from a suggestion list. Enter only fills the box; the next Enter moves on |
+| Left / Right on FORM | Switch between the three shops |
+| Ctrl + Enter or Ctrl + S | Save the open window (pressing twice still saves once) |
+| Ctrl + Delete or Alt + D | Delete the item line / record / bill under the cursor (always asks first) |
+| Esc | Close the suggestion list first, then the window (asks if you typed something unsaved) |
+| N | New bill (when no window is open) |
+| / | Search on Records or Products & customers; Down arrow then Enter opens a result |
+| Alt + 1 to 6 | Overview, Records, Supply orders, Products & customers, Analytics, Backup |
+
+Holding Enter down does not repeat actions, and Enter while typing in Hindi/IME composition is ignored.
+
+### Keyboard test
+
+`tests/keyboard.test.mjs` drives every page and window with the keyboard in a real Chromium and checks line counts (exactly +1, no phantom add/delete), saving, delete-with-confirm and console errors. It runs on local data only (the Firebase config is swapped for a blank one inside the test browser, and the sign-in check uses a fake Firebase), so it never touches the shared workspace.
+
+```
+npm i -D playwright
+npx playwright install chromium
+node tests/keyboard.test.mjs                                              # tests this folder
+node tests/keyboard.test.mjs https://mtarvecha660-lgtm.github.io/kirana-desk/   # tests the live site
+```
+
 ## Run locally
 
 Open PowerShell in this folder and run: py -m http.server 8000

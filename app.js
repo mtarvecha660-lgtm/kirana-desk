@@ -178,21 +178,42 @@ import { firebaseConfig } from './firebase-config.js';
       (can('bill') ? '<div class="quick-grid">' + BIZ.map(b => '<article class="form-card"><span class="form-code">' + b.prefix + '</span><h3>' + esc(b.name) + '</h3><p>Start a dispatch bill. Numbering is separate for this form.</p><button class="button button-light button-small" data-action="new-bill" data-form="' + b.id + '">Create bill →</button></article>').join('') + '</div>' : '') +
       '<section class="panel activity-panel"><div class="panel-head"><div><div class="panel-title">Recent bills</div><div class="panel-caption">Latest dispatches</div></div><button class="button button-light button-small" data-action="goto-bills">View all bills →</button></div>' + billTable(recent, form === 'all') + '</section>';
   }
+  // Redraw a page without pulling the search box out from under the cursor (fast typing used to lose letters,
+  // and a lost "n" opened a new bill).
+  function setPage(html){
+    const container=$('#page-content'), live=document.activeElement;
+    const keep=live&&(live.id==='bill-search'||live.id==='catalog-search')&&container.contains(live)?live:null;
+    if(!keep){container.innerHTML=html;return;}
+    const tmp=document.createElement('div');tmp.innerHTML=html;
+    let fn=tmp.querySelector('#'+keep.id), ln=keep;
+    if(!fn){container.innerHTML=html;return;}
+    const depth=(n,top)=>{let d=0;while(n&&n!==top){n=n.parentNode;d++;}return d;};
+    if(depth(ln,container)!==depth(fn,tmp)){container.innerHTML=html;return;}
+    Array.from(fn.attributes).forEach(a=>{if(a.name!=='value')ln.setAttribute(a.name,a.value);});
+    while(ln!==container){
+      const lp=ln.parentNode, fp=fn.parentNode;
+      Array.from(lp.childNodes).forEach(c=>{if(c!==ln)lp.removeChild(c);});
+      let seen=false;
+      Array.from(fp.childNodes).forEach(c=>{if(c===fn){seen=true;return;} if(seen)lp.appendChild(c); else lp.insertBefore(c,ln);});
+      if(fp!==tmp){Array.from(lp.attributes).forEach(a=>{if(!fp.hasAttribute(a.name))lp.removeAttribute(a.name);});Array.from(fp.attributes).forEach(a=>lp.setAttribute(a.name,a.value));}
+      ln=lp;fn=fp;
+    }
+  }
   async function renderBills() {
     const bills = (await all('bills')).sort((a,b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
     const visible = bills.filter(b => {
       const q = search.toLowerCase(), match = !q || [b.billNumber,b.customerName,...b.items.map(i => i.productName)].some(v => String(v).toLowerCase().includes(q));
       return (form === 'all' || b.businessId === form) && match && (period === 'all' || (period === 'fy' ? b.financialYear === fy(today()) : b.date.startsWith(period)));
     });
-    $('#page-content').innerHTML = head('DISPATCH RECORDS','Dispatch records','Find and review entries without paging through the bill book.','<div class="head-actions">' + (can('bill') ? '<button class="button button-primary" data-action="new-bill">＋ Add record</button>' : '') + '</div>') + tabs() +
-      '<section class="panel"><div class="toolbar" style="padding:15px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="bill-search" class="input" placeholder="Search bill, customer, product…" value="' + esc(search) + '"></div><span class="tag gray">' + visible.length + ' bills</span></div><div class="toolbar-right"><button class="button button-light button-small" data-action="returns-report">↩ Returns</button><select id="bill-period" class="select" style="width:auto"><option value="all">All dates</option><option value="fy" ' + (period === 'fy' ? 'selected' : '') + '>Current FY</option></select></div></div>' + billTable(visible, form === 'all') + '</section>';
+    setPage(head('DISPATCH RECORDS','Dispatch records','Find and review entries without paging through the bill book.','<div class="head-actions">' + (can('bill') ? '<button class="button button-primary" data-action="new-bill">＋ Add record</button>' : '') + '</div>') + tabs() +
+      '<section class="panel"><div class="toolbar" style="padding:15px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="bill-search" class="input" placeholder="Search bill, customer, product…" value="' + esc(search) + '"></div><span class="tag gray">' + visible.length + ' bills</span></div><div class="toolbar-right"><button class="button button-light button-small" data-action="returns-report">↩ Returns</button><select id="bill-period" class="select" style="width:auto"><option value="all">All dates</option><option value="fy" ' + (period === 'fy' ? 'selected' : '') + '>Current FY</option></select></div></div>' + billTable(visible, form === 'all') + '</section>');
   }
   async function renderCatalog() {
     const res = await Promise.all([all('products'),all('customers')]), products=res[0], customers=res[1], list=catalog==='products'?products:customers;
     const shown = list.filter(r => (catalog==='products'||form==='all'||r.businessId===form) && (!catalogSearch || (r.name+' '+(r.note||'')).toLowerCase().includes(catalogSearch.toLowerCase())));
     const label = catalog==='products'?'product':'customer', records = shown.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>'+(catalog==='products'?'PRODUCT':'CUSTOMER')+'</th><th>'+(catalog==='products'?'BRAND':'FORM')+'</th><th>'+(catalog==='products'?'UNIT':'CONTACT / NOTE')+'</th><th>ADDED</th><th></th></tr></thead><tbody>'+shown.map(r => '<tr><td><div class="row-title"><span class="avatar">'+esc(r.name.slice(0,1).toUpperCase())+'</span><span class="strong-cell">'+esc(r.name)+'</span>'+(r.isSample?'<span class="tag gray">SAMPLE</span>':'')+'</div></td><td>'+(catalog==='products'?esc(r.brand||'—'):chip(r.businessId))+'</td><td class="muted-cell">'+esc(catalog==='products'?(r.unit||'—'):(r.note||'—'))+'</td><td class="muted-cell">'+dateLabel(r.createdAt.slice(0,10))+'</td><td>'+(catalog==='customers'?'<button class="icon-button" data-action="customer-register" data-name="'+esc(r.name)+'" title="In / Out register">\u21a9</button>':'')+(can('catalog')?'<button class="icon-button" data-action="edit-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Edit">✎</button>':'')+(can('delete')?'<button class="icon-button" data-action="delete-record" data-kind="'+catalog+'" data-id="'+esc(r.id)+'" title="Delete">⌫</button>':'')+'</td></tr>').join('')+'</tbody></table></div>' : empty('No '+catalog+' yet','Add '+(catalog==='products'?'products dispatched from this form':'the people who receive products from this form')+'. They will be searchable on bills.', can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '');
-    $('#page-content').innerHTML = head('MASTER LISTS','Products & customers','Products are shared across all forms. Customers belong to their form.','<div class="head-actions">' + (can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '') + '</div>')+tabs()+
-      '<div class="tabs-underline"><button class="underline-tab '+(catalog==='products'?'active':'')+'" data-catalog-tab="products">Products ('+products.length+')</button><button class="underline-tab '+(catalog==='customers'?'active':'')+'" data-catalog-tab="customers">Customers ('+customers.filter(r=>form==='all'||r.businessId===form).length+')</button></div><section class="panel" style="margin-top:15px"><div class="toolbar" style="padding:14px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="catalog-search" class="input" placeholder="Search '+catalog+'…" value="'+esc(catalogSearch)+'"></div><span class="tag gray">'+shown.length+' records</span></div></div>'+records+'</section>';
+    setPage(head('MASTER LISTS','Products & customers','Products are shared across all forms. Customers belong to their form.','<div class="head-actions">' + (can('catalog') ? '<button class="button button-primary" data-action="add-record" data-kind="'+catalog+'">＋ Add '+label+'</button>' : '') + '</div>')+tabs()+
+      '<div class="tabs-underline"><button class="underline-tab '+(catalog==='products'?'active':'')+'" data-catalog-tab="products">Products ('+products.length+')</button><button class="underline-tab '+(catalog==='customers'?'active':'')+'" data-catalog-tab="customers">Customers ('+customers.filter(r=>form==='all'||r.businessId===form).length+')</button></div><section class="panel" style="margin-top:15px"><div class="toolbar" style="padding:14px 17px;margin:0;border-bottom:1px solid var(--line)"><div class="toolbar-left"><div class="search-box"><span>⌕</span><input id="catalog-search" class="input" placeholder="Search '+catalog+'…" value="'+esc(catalogSearch)+'"></div><span class="tag gray">'+shown.length+' records</span></div></div>'+records+'</section>');
   }
   function startDate(scope) {
     const n=new Date();
@@ -235,13 +256,13 @@ import { firebaseConfig } from './firebase-config.js';
       const products=res[0].filter(x=>x.businessId===data.businessId), customers=res[1].filter(x=>x.businessId===data.businessId);const brandMap={};res[0].forEach(p=>{brandMap[String(p.name||'').trim().toLowerCase()]=p.brand||'';});
       const isSaved=!!data.billNumber, editing=isSaved&&!!editMode&&can('bill');
       const lockCore=isSaved, lockFields=isSaved&&!editing;
-      const rows=data.items.map(i=>{const brv=i.brand!=null&&i.brand!==''?i.brand:(brandMap[String(i.productName||'').trim().toLowerCase()]||'');return '<div class="item-row"><input class="input" data-field="productName" value="'+esc(i.productName)+'" placeholder="Search product" required '+(lockFields?'readonly':'')+'><input class="input" data-field="brand" value="'+esc(brv)+'" placeholder="brand" '+(lockFields?'readonly':'')+'><input class="input" type="number" min="0" step="any" data-field="price" value="'+esc(i.price==null?'':i.price)+'" placeholder="price"><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity)+'" placeholder="0" required '+(lockFields?'readonly':'')+'><input class="input" data-field="unit" value="'+esc(i.unit)+'" placeholder="e.g. bag" required '+(lockFields?'readonly':'')+'>'+(lockFields?'':'<button class="icon-button remove-item" type="button" data-action="remove-item">×</button>')+'</div>';}).join('');
+      const rows=data.items.map(i=>{const brv=i.brand!=null&&i.brand!==''?i.brand:(brandMap[String(i.productName||'').trim().toLowerCase()]||'');return itemRowHtml(i,lockFields,brv);}).join('');
       const total=data.items.reduce((s,i)=>s+(Number(i.price)>0?Number(i.price)*Number(i.quantity||0):0),0);
       $('#bill-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">'+(editing?'EDIT RECORD':(isSaved?'DISPATCH RECORD':'NEW DISPATCH'))+'</div><h2>'+(isSaved?esc(data.billNumber):'Create a bill')+'</h2><p>'+esc(biz(data.businessId).name)+' · '+(isSaved?'FY '+esc(data.financialYear):'Number assigned when saved for FY '+fy(data.date))+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div>'+
-       '<form id="bill-form"><input type="hidden" name="billId" value="'+(isSaved?esc(data.id):'')+'"><input type="hidden" name="soId" value="'+esc(data.supplyOrderId||'')+'"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><input type="hidden" id="bill-business" name="businessId" value="'+esc(data.businessId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(data.businessId===b.id?' active':'')+'" data-action="pick-business" data-id="'+b.id+'" '+(lockCore?'disabled':'')+'>'+esc(b.name)+'</button>').join('')+'</div></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(lockCore?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" name="customerName" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(lockFields?'readonly':'')+'</div>'+(editing?'<div class="full"><label class="field-label">BILL NO.</label><input id="bill-no" class="input" name="billNumber" value="'+esc(data.billNumber)+'" required></div>':'')+'</div>'+
+       '<form id="bill-form" novalidate><input type="hidden" name="billId" value="'+(isSaved?esc(data.id):'')+'"><input type="hidden" name="soId" value="'+esc(data.supplyOrderId||'')+'"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><input type="hidden" id="bill-business" name="businessId" value="'+esc(data.businessId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(data.businessId===b.id?' active':'')+'" data-action="pick-business" data-id="'+b.id+'" '+(lockCore?'disabled':'')+'>'+esc(b.name)+'</button>').join('')+'</div></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(lockCore?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" autocomplete="off" name="customerName" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(lockFields?'readonly':'')+'></div>'+(editing?'<div class="full"><label class="field-label">BILL NO.</label><input id="bill-no" class="input" name="billNumber" value="'+esc(data.billNumber)+'" required></div>':'')+'</div>'+
        '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(lockFields?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table bill-grid"><div class="items-table-head"><div>PRODUCT</div><div>BRAND</div><div>PRICE <span style="font-weight:400">(optional)</span></div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div></div>'+
        (isSaved&&total>0?'<div class="modal-section total-line"><span>Amount total (priced lines)</span><b>₹'+number(Math.round(total*100)/100)+'</b></div>':'')+
-       '<div class="modal-section"><label class="field-label">GST % <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-gst" class="input" type="number" min="0" max="28" step="0.01" value="'+(data.gst==null?'':data.gst)+'" placeholder="e.g. 5" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#97a29b">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div>'+(isSaved&&data.supplyOrderId?'<div class="modal-section"><span class="field-label">SUPPLY ORDER</span> <button type="button" class="button button-light button-small" data-action="open-supply" data-id="'+esc(data.supplyOrderId)+'">'+esc(soName)+'</button></div>':'')+'<div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, note, or bill number. Date stays fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price on each line is optional. No GST. Keyboard: Enter moves through each field and option like Busy, Ctrl+Enter saves.')+'</div></div>'+
+       '<div class="modal-section"><label class="field-label">GST % <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-gst" class="input" type="number" min="0" max="28" step="0.01" value="'+(data.gst==null?'':data.gst)+'" placeholder="e.g. 5" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#97a29b">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div>'+(isSaved&&data.supplyOrderId?'<div class="modal-section"><span class="field-label">SUPPLY ORDER</span> <button type="button" class="button button-light button-small" data-action="open-supply" data-id="'+esc(data.supplyOrderId)+'">'+esc(soName)+'</button></div>':'')+'<div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, note, or bill number. Date stays fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price on each line is optional. No GST. Keyboard: Enter goes to the next field; on the last line Enter adds one new line; Enter on an empty product line finishes items. Shift+Enter goes back, Ctrl+Enter saves, Ctrl+Delete removes a line. Press ? for all keys.')+'</div></div>'+
        '<div class="modal-foot">'+(isSaved&&!editing?'<button class="button button-light" type="button" data-action="print-bill" data-id="'+esc(data.id)+'">⎙ Print</button>'+(can('bill')?'<button class="button button-light" type="button" data-action="return-bill" data-id="'+esc(data.id)+'">↩ Return</button>':''):'<span class="field-hint">'+(editing?'Date stays fixed · bill number editable':'Product · price (optional) · quantity · unit')+'</span>')+'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(editing?'<button class="button button-primary" type="submit">Save changes</button>':(!isSaved?'<button class="button button-primary" type="submit">Save record</button>':(can('bill')?'<button class="button button-primary" type="button" data-action="edit-bill" data-id="'+esc(data.id)+'">Edit</button>':'')))+(isSaved&&!editing&&can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete</button>':'')+'</div></div></form>';
       renderPhotoArea(data.photo||'', !lockFields);
     }).catch(e=>{console.error(e);toast('Could not load your catalog.',true);});
@@ -249,7 +270,7 @@ import { firebaseConfig } from './firebase-config.js';
   function newBill(key) { const businessId=key||(form==='all'?'sampurn':form); billDialog({businessId,date:today(),customerName:'',items:[{productName:'',quantity:'',unit:''}],notes:''}); $('#bill-dialog').showModal(); }
   function recordDialog(kind, key, existing) {
     const product=kind==='products', bizId=key||(existing&&existing.businessId)||(form==='all'?'sampurn':form);
-    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>'+(product?'Products are shared across all forms.':'This record belongs to the selected form only.')+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid">'+(product?'<div class="full"><div class="helper-box">Products are shared across all forms. Add a product once and it is available in every form.</div><input type="hidden" name="businessId" value="'+esc(bizId)+'"></div>':'<div class="full"><label class="field-label">FORM</label><input type="hidden" name="businessId" value="'+esc(bizId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(b.id===bizId?' active':'')+'" data-action="pick-record-business" data-id="'+b.id+'">'+esc(b.name)+'</button>').join('')+'</div></div>')+'<div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" list="unit-list" placeholder="bag, kg, box"><datalist id="unit-list"><option value="bag"><option value="kg"><option value="box"><option value="piece"><option value="quintal"></datalist></div><div class="full"><label class="field-label">BRAND <span style="font-weight:400">(optional)</span></label><input class="input" name="brand" value="'+esc(existing&&existing.brand||'')+'" placeholder="e.g. Fortune"></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
+    $('#record-dialog').innerHTML='<div class="modal-head"><div><div class="eyebrow">FORM CATALOG</div><h2>'+(existing?'Edit ':'Add ')+(product?'product':'customer')+'</h2><p>'+(product?'Products are shared across all forms.':'This record belongs to the selected form only.')+'</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><form id="record-form"><div class="modal-body"><div class="form-grid">'+(product?'<div class="full"><div class="helper-box">Products are shared across all forms. Add a product once and it is available in every form.</div><input type="hidden" name="businessId" value="'+esc(bizId)+'"></div>':'<div class="full"><label class="field-label">FORM</label><input type="hidden" name="businessId" value="'+esc(bizId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(b.id===bizId?' active':'')+'" data-action="pick-record-business" data-id="'+b.id+'">'+esc(b.name)+'</button>').join('')+'</div></div>')+'<div class="full"><label class="field-label">'+(product?'PRODUCT NAME':'CUSTOMER NAME')+'</label><input class="input" name="name" value="'+esc(existing&&existing.name||'')+'" required maxlength="100" placeholder="'+(product?'e.g. Basmati rice':'e.g. Sharma Stores')+'"></div>'+(product?'<div class="full"><label class="field-label">DEFAULT UNIT <span style="font-weight:400">(optional)</span></label><input class="input" name="unit" value="'+esc(existing&&existing.unit||'')+'" data-field="unit" autocomplete="off" placeholder="bag, kg, box"></div><div class="full"><label class="field-label">BRAND <span style="font-weight:400">(optional)</span></label><input class="input" name="brand" value="'+esc(existing&&existing.brand||'')+'" placeholder="e.g. Fortune"></div>':'<div class="full"><label class="field-label">CONTACT / NOTE <span style="font-weight:400">(optional)</span></label><input class="input" name="note" value="'+esc(existing&&existing.note||'')+'" placeholder="Phone or delivery note"></div>')+'</div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Cancel</button><button class="button button-primary" type="submit">Save</button></div></div><input type="hidden" name="kind" value="'+kind+'"><input type="hidden" name="recordId" value="'+esc(existing&&existing.id||'')+'"></form>';
     $('#record-dialog').showModal();
   }
   function backupManifest(){ try{ return JSON.parse(localStorage.getItem('kiranaDeskBackupManifest')||'{}'); }catch(e){ return {}; } }
@@ -430,7 +451,7 @@ import { firebaseConfig } from './firebase-config.js';
         body = '<div class="modal-body"><form id="supply-form">' +
           '<input type="hidden" id="so-id" value="' + esc(data.id || '') + '">' +
           '<input type="hidden" id="so-business" value="' + esc(data.businessId || (form === 'all' ? 'sampurn' : form)) + '">' +
-          '<div class="form-grid"><div><label class="field-label">REFERENCE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="so-ref" class="input" value="' + esc(data.ref || '') + '" placeholder="e.g. PO number or customer order no."></div><div><label class="field-label">ORDER DATE</label><input id="so-date" class="input" type="date" value="' + esc(data.date || today()) + '"></div><div class="full"><label class="field-label">CUSTOMER</label><input id="so-customer" class="input" value="' + esc(data.customerName || '') + '" placeholder="Search or enter customer"></div><div class="full"><label class="field-label">NOTES <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="so-notes" class="input" value="' + esc(data.notes || '') + '" placeholder="What this order covers"></div></div>' +
+          '<div class="form-grid"><div><label class="field-label">REFERENCE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="so-ref" class="input" value="' + esc(data.ref || '') + '" placeholder="e.g. PO number or customer order no."></div><div><label class="field-label">ORDER DATE</label><input id="so-date" class="input" type="date" value="' + esc(data.date || today()) + '"></div><div class="full"><label class="field-label">CUSTOMER</label><input id="so-customer" class="input" autocomplete="off" value="' + esc(data.customerName || '') + '" placeholder="Search or enter customer"></div><div class="full"><label class="field-label">NOTES <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="so-notes" class="input" value="' + esc(data.notes || '') + '" placeholder="What this order covers"></div></div>' +
           '<div class="modal-section"><label class="field-label">ORDER FILE</label><div id="so-file-area"></div><input type="file" id="so-file-input" accept="image/*,application/pdf" hidden><input type="hidden" id="so-file-value" value="' + esc(data.file || '') + '"><input type="hidden" id="so-file-type" value="' + esc(data.fileType || '') + '"></div>' +
           '<div class="items-toolbar"><strong>Link dispatch bills</strong><span class="field-hint">Newest 80 bills shown</span></div>' +
           '<div class="modal-section" style="padding:0"><input id="so-search" class="input" placeholder="Filter by bill number or customer"></div>' +
@@ -571,17 +592,18 @@ import { firebaseConfig } from './firebase-config.js';
   function photoView(src, id) {
     $('#bill-dialog').innerHTML = '<div class="modal-head"><div><div class="eyebrow">ATTACHMENT</div><h2>Bill photo</h2></div><button class="icon-button" data-action="close-dialog">✕</button></div><div class="modal-body"><div class="photo-view"><img src="' + src + '" alt="Bill photo"></div></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px">' + (id ? '<button class="button button-light" type="button" data-action="back-to-bill" data-id="' + esc(id) + '">← Back</button>' : '') + '<button class="button button-primary" type="button" data-action="close-dialog">Close</button></div></div>';
   }
-  let sugBox=null, sugItems=[], sugIdx=-1;
-  function closeSug(){ if(sugBox){sugBox.remove();sugBox=null;} sugItems=[]; sugIdx=-1; }
+  let sugBox=null, sugItems=[], sugIdx=-1, sugInput=null;
+  function closeSug(){ if(sugBox){sugBox.remove();sugBox=null;} sugItems=[]; sugIdx=-1; sugInput=null; }
   function openSug(input, values){
     closeSug();
+    if(document.activeElement!==input)return;
     const q=input.value.trim().toLowerCase();
     const picks=values.filter(v=>!q||v.toLowerCase().includes(q)).slice(0,8);
     if(!picks.length)return;
     const rect=input.getBoundingClientRect();
     const box=document.createElement('div'); box.className='suggestions sug-fixed';
     picks.forEach(v=>{
-      const b=document.createElement('button'); b.type='button'; b.className='suggestion'; b.textContent=v;
+      const b=document.createElement('button'); b.type='button'; b.className='suggestion'; b.tabIndex=-1; b.textContent=v;
       const pick=e=>{e.preventDefault();input.value=v;input.dispatchEvent(new Event('change',{bubbles:true}));closeSug();input.focus();};
       b.addEventListener('mousedown',pick);
       let tsy=null,tmoved=false;
@@ -595,72 +617,234 @@ import { firebaseConfig } from './firebase-config.js';
     let top=rect.bottom+4;
     if(top+bh>window.innerHeight-8)top=Math.max(8,rect.top-bh-4);
     box.style.top=top+'px'; box.style.left=Math.max(8,rect.left)+'px'; box.style.width=rect.width+'px';
-    sugBox=box; sugItems=Array.prototype.slice.call(box.querySelectorAll('.suggestion')); sugIdx=-1;
+    sugBox=box; sugInput=input; sugItems=Array.prototype.slice.call(box.querySelectorAll('.suggestion')); sugIdx=-1;
   }
-  document.addEventListener('keydown',e=>{
-    if(!sugBox||!sugItems.length)return;
-    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
-      e.preventDefault();
-      if(sugIdx<0)sugIdx=e.key==='ArrowDown'?0:sugItems.length-1;
-      else sugIdx=(sugIdx+(e.key==='ArrowDown'?1:-1)+sugItems.length)%sugItems.length;
-      sugItems.forEach((b,i)=>b.classList.toggle('active',i===sugIdx));
-      sugItems[sugIdx].scrollIntoView({block:'nearest'});
-    }else if(e.key==='Enter'&&sugIdx>=0){
-      e.preventDefault();
-      sugItems[sugIdx].dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
-    }else if(e.key==='Escape'){
-      closeSug();
-    }
-  });
+  const KBD_HELP=[
+    ['Enter','Next field. On the last field of the last item line it adds ONE new line'],
+    ['Enter on an empty product line','Finish items and jump to GST / note'],
+    ['Shift + Enter','Previous field'],
+    ['Up / Down, then Enter','Pick from the suggestion list (Enter only fills it)'],
+    ['Left / Right on FORM','Switch between the three shops'],
+    ['Ctrl + Enter or Ctrl + S','Save the open window'],
+    ['Ctrl + Delete or Alt + D','Delete the line / record under the cursor (asks first)'],
+    ['Esc','Close the suggestion list, then the window (asks if unsaved)'],
+    ['N','New bill (when no window is open)'],
+    ['/','Search on Records or Catalog, then Down arrow + Enter opens a result'],
+    ['Alt + 1 to 6','Overview, Records, Supply, Catalog, Analytics, Backup'],
+    ['?','Show these shortcuts']
+  ];
   function showKbdHelp(){
     let d=document.getElementById('kbd-help');
     if(!d){d=document.createElement('dialog');d.id='kbd-help';d.className='modal modal-narrow';document.body.append(d);}
     d.innerHTML='<div class="modal-head"><div><div class="eyebrow">KEYBOARD</div><h2>Shortcuts</h2><p>Use Kirana Desk without the mouse.</p></div><button class="icon-button" data-action="close-dialog">\u2715</button></div><div class="modal-body"><div class="metric-list">'
-      +[['Alt + 1 to 6','Switch page: Overview, Records, Supply, Catalog, Analytics, Backup'],['N','New bill (when not typing)'],['/','Focus the search box on the open page'],['Enter','Next field or option, Shift + Enter goes back, like Busy'],['Ctrl + Enter','Save the open form'],['Esc','Close the open window'],['Up / Down arrows','Pick from the suggestion list, Enter fills it']]
+      +KBD_HELP
       .map(r=>'<div class="metric-row"><span class="row-title"><b>'+r[0]+'</b> \u00b7 '+r[1]+'</span></div>').join('')+'</div><p class="field-hint" style="margin-top:10px">Press ? anywhere to see this again.</p></div><div class="modal-foot"><span></span><button class="button button-primary" type="button" data-action="close-dialog">Got it</button></div>';
     d.showModal();
   }
-  document.addEventListener('keydown',e=>{
-    const t=e.target||null;
+  /* ---------- Keyboard: ONE central handler (Busy-style entry) ----------
+     Enter = next field / pick highlighted suggestion · Shift+Enter = back
+     Enter on the last field of the last item line = exactly one new line
+     Ctrl+Enter (or Ctrl+S) = save · Ctrl+Delete or Alt+D = delete (always asks)
+     Esc = close suggestion list, then the window. Enter never presses a delete/remove button. */
+  const DANGER_SEL='[data-action^="delete-"],[data-action^="remove-"],.button-danger';
+  const SAVE_SEL='button[type="submit"],[data-action="save-supply"],[data-action="save-return"],[data-action="generate-return-report"],[data-action="quick-backup"]';
+  const LIST_BTN_SEL='[data-action="view-bill"],[data-action="edit-record"],[data-action="open-supply"]';
+  let kbdNextFocus=null, kbdSaving=false, lastTypedAt=0, searchSeq=0, searchJob=Promise.resolve();
+  function focusFirstResult(){ searchJob.then(()=>{ const first=$$(LIST_BTN_SEL,$('#page-content')).find(visible); if(first)first.focus(); }); }
+  function topDialog(){ const open=$$('dialog[open]'); return open.length?open[open.length-1]:null; }
+  function kbdRoot(){ const d=topDialog(); if(d)return d; const g=$('#auth-gate'); if(g&&!g.hidden)return g; return null; }
+  function visible(el){ if(!el||el.disabled)return false; if(el.offsetParent===null){const cs=getComputedStyle(el);if(cs.position!=='fixed'||cs.display==='none'||cs.visibility==='hidden')return false;} return !el.closest('[hidden]'); }
+  function flowFields(root){
+    return $$('input:not([type=hidden]):not([type=file]):not([type=button]):not([type=submit]),select,textarea,.pick-chip.active',root)
+      .filter(el=>visible(el)&&!el.readOnly&&!el.closest('.sug-fixed'));
+  }
+  function saveButton(root){ return root?$$(SAVE_SEL,root).find(b=>visible(b)&&!b.closest('.sug-fixed')):null; }
+  function focusEl(el){ if(!el)return; el.focus(); if(el.select&&el.tagName==='INPUT'&&/^(text|search|number|tel|email|password|)$/.test(el.type||'')&&el.value){try{el.select();}catch(_){}} }
+  function markDanger(root){ $$(DANGER_SEL,root||document).forEach(b=>{ if(b.getAttribute('tabindex')!=='-1')b.setAttribute('tabindex','-1'); }); }
+  function itemRowHtml(i, lock, brv){
+    i=i||{};
+    return '<div class="item-row"><input class="input" data-field="productName" autocomplete="off" value="'+esc(i.productName||'')+'" placeholder="Search product" required '+(lock?'readonly':'')+'><input class="input" data-field="brand" autocomplete="off" value="'+esc(brv==null?(i.brand||''):brv)+'" placeholder="brand" '+(lock?'readonly':'')+'><input class="input" type="number" min="0" step="any" data-field="price" value="'+esc(i.price==null?'':i.price)+'" placeholder="price" '+(lock?'readonly':'')+'><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity==null?'':i.quantity)+'" placeholder="0" required '+(lock?'readonly':'')+'><input class="input" data-field="unit" autocomplete="off" value="'+esc(i.unit||'')+'" placeholder="e.g. bag" required '+(lock?'readonly':'')+'>'+(lock?'':'<button class="icon-button remove-item" type="button" data-action="remove-item" tabindex="-1" title="Remove line (Ctrl+Delete)">×</button>')+'</div>';
+  }
+  function addItemRow(){
+    const box=$('#bill-items'); if(!box)return null;
+    box.insertAdjacentHTML('beforeend',itemRowHtml({}, false, ''));
+    const row=box.lastElementChild; const inp=$('[data-field="productName"]',row); if(inp)inp.focus();
+    return row;
+  }
+  function rowIsBlank(row){ return $$('[data-field]',row).every(i=>String(i.value||'').trim()===''); }
+  function removeItemRow(row, ask){
+    const box=$('#bill-items'); if(!box||!row)return;
+    const rows=$$('.item-row',box);
+    if(rows.length<=1){toast('A bill needs one item.');return;}
+    if(ask&&!rowIsBlank(row)&&!confirm('Remove this line'+(($('[data-field="productName"]',row)||{}).value?' ('+$('[data-field="productName"]',row).value+')':'')+'?'))return;
+    const field=(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.field)||'productName';
+    const idx=rows.indexOf(row); row.remove();
+    const left=$$('.item-row',box), target=left[Math.min(idx,left.length-1)];
+    if(ask&&target)focusEl($('[data-field="'+field+'"]',target));
+  }
+  function nextFromItemGrid(root, el){
+    // first flow field after the item grid (GST on the bill form), else the save button
+    const list=flowFields(root), grid=$('#bill-items');
+    const after=list.find(f=>!grid.contains(f)&&(grid.compareDocumentPosition(f)&Node.DOCUMENT_POSITION_FOLLOWING));
+    return after||saveButton(root);
+  }
+  function kbdMove(root, el, dir){
+    const list=flowFields(root);
+    // Bill item grid rules
+    const row=el.closest&&el.closest('#bill-items .item-row');
+    if(row&&dir>0){
+      const rows=$$('.item-row',$('#bill-items')), isLastRow=row===rows[rows.length-1];
+      const rowFields=list.filter(f=>row.contains(f)), lastInRow=rowFields[rowFields.length-1];
+      const product=$('[data-field="productName"]',row), productEmpty=!product||!product.value.trim();
+      if(isLastRow&&el===product&&productEmpty&&rows.length>1){ focusEl(nextFromItemGrid(root,el)); return; }
+      if(isLastRow&&el===lastInRow){
+        if(productEmpty){ focusEl(nextFromItemGrid(root,el)); return; }
+        addItemRow(); return;
+      }
+    }
+    const i=list.indexOf(el);
+    if(i<0){ focusEl(list[0]||saveButton(root)); return; }
+    const j=i+dir;
+    if(j<0)return;
+    if(j>=list.length){ const sb=saveButton(root); if(sb)sb.focus(); return; }
+    focusEl(list[j]);
+  }
+  function kbdSave(root){
+    const b=saveButton(root); if(!b||b.disabled)return false;
+    if(kbdSaving)return true; kbdSaving=true; setTimeout(()=>{kbdSaving=false;},400);
+    closeSug(); b.click(); return true;
+  }
+  function kbdDelete(){
+    const t=document.activeElement, row=t&&t.closest&&t.closest('#bill-items .item-row');
+    if(row&&$('[data-action="remove-item"]',row)){ removeItemRow(row,true); return true; }
+    const tr=t&&t.closest&&t.closest('tr'), del=tr?$('[data-action="delete-record"]',tr):null;
+    if(del){ del.click(); return true; }
+    const d=topDialog(), dd=d?$$('[data-action="delete-bill"],[data-action="delete-supply"]',d).find(visible):null;
+    if(dd){ dd.click(); return true; }
+    toast('Nothing to delete here. Put the cursor on a line or record first.'); return true;
+  }
+  function onKey(e){
+    if(e.isComposing||e.keyCode===229)return;
+    const t=e.target||null, root=kbdRoot();
     const typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable);
-    if(e.key==='?'&&!typing){showKbdHelp();return;}
-    if((e.ctrlKey||e.metaKey)&&!e.altKey&&(e.key==='s'||e.key==='S')){
-      const dlg=document.querySelector('dialog[open]');const f=dlg?dlg.querySelector('form'):null;
-      if(f){e.preventDefault();if(f.requestSubmit)f.requestSubmit();else f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));}
+    const ctrl=e.ctrlKey||e.metaKey;
+    if(typing&&e.key&&e.key.length===1)lastTypedAt=Date.now();
+    // 1. Suggestion list owns arrows / Enter / Esc while it is open — nothing else sees the key
+    if(sugBox&&sugItems.length&&t===sugInput){
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+        e.preventDefault();e.stopImmediatePropagation();
+        if(sugIdx<0)sugIdx=e.key==='ArrowDown'?0:sugItems.length-1;
+        else sugIdx=(sugIdx+(e.key==='ArrowDown'?1:-1)+sugItems.length)%sugItems.length;
+        sugItems.forEach((b,i)=>b.classList.toggle('active',i===sugIdx));
+        sugItems[sugIdx].scrollIntoView({block:'nearest'});
+        return;
+      }
+      if(e.key==='Enter'&&!ctrl&&!e.shiftKey&&!e.altKey&&sugIdx>=0){
+        e.preventDefault();e.stopImmediatePropagation();
+        if(!e.repeat)sugItems[sugIdx].dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
+        return;
+      }
+      if(e.key==='Escape'){ e.preventDefault();e.stopImmediatePropagation();closeSug();return; }
+      if(e.key==='Tab')closeSug();
+    }
+    // 2. Save
+    if(ctrl&&!e.altKey&&(e.key==='Enter'||e.key==='s'||e.key==='S')){
+      if(root){ e.preventDefault(); if(!e.repeat)kbdSave(root); }
       return;
     }
-    if(e.altKey&&!e.ctrlKey&&!e.metaKey&&/^[1-6]$/.test(e.key)){
-      e.preventDefault();const nav=$$('.nav-item[data-page]'),n=nav[Number(e.key)-1];if(n){page=n.dataset.page;render();}return;
+    // 3. Delete — explicit key, always confirmed
+    if((ctrl&&!e.altKey&&e.key==='Delete')||(e.altKey&&!ctrl&&(e.key==='d'||e.key==='D'||e.code==='KeyD'))){
+      e.preventDefault(); if(!e.repeat)kbdDelete(); return;
     }
-    if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){
-      const dlg=document.querySelector('dialog[open]');
-      const f=dlg?dlg.querySelector('form'):null;
-      if(f){e.preventDefault();f_requestSubmit(f);return;}
-    }
-    if(e.key==='Enter'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.defaultPrevented){
-      if(sugBox&&sugIdx>=0)return;
-      if(t&&(t.tagName==='BUTTON'||t.tagName==='A'||t.tagName==='SELECT'||(t.tagName==='INPUT'&&(t.type==='checkbox'||t.type==='radio'||t.type==='file'))))return;
-      const dlg=document.querySelector('dialog[open]');
-      const root=dlg||document.body;
-      const els=Array.prototype.slice.call(root.querySelectorAll('input:not([type=hidden]):not([type=file]),button,select,textarea')).filter(el=>{
-        if(el.disabled||el.closest('.sug-fixed'))return false;
-        if(el.offsetParent===null){const cs=getComputedStyle(el);if(cs.position!=='fixed')return false;}
-        return true;
-      });
-      if(!els.length)return;
-      let i=els.indexOf(document.activeElement);
-      e.preventDefault();closeSug();
-      if(i<0){els[0].focus();return;}
-      const dir=e.shiftKey?-1:1;
-      const next=els[(i+dir+els.length)%els.length];
-      next.focus();
-      if(next.value&&next.select)next.select();
+    // 4. Enter
+    if(e.key==='Enter'&&!ctrl&&!e.altKey){
+      if(t&&t.tagName==='TEXTAREA'&&!e.shiftKey)return;
+      if(e.repeat){ e.preventDefault(); return; }
+      if(t&&t.matches&&t.matches(DANGER_SEL)){ e.preventDefault(); return; }
+      if(t&&t.classList&&t.classList.contains('pick-chip')&&root){
+        e.preventDefault(); closeSug();
+        if(e.shiftKey){ kbdMove(root,t,-1); return; }
+        const list=flowFields(root), i=list.indexOf(t), nx=list[i+1];
+        if(!t.classList.contains('active')){ if(nx&&nx.id)kbdNextFocus='#'+nx.id; t.click(); }
+        if(nx&&document.contains(nx))focusEl(nx);
+        return;
+      }
+      if(t&&(t.tagName==='BUTTON'||t.tagName==='A'||t.tagName==='SUMMARY')){
+        if(e.shiftKey&&root){ e.preventDefault(); const list=flowFields(root); focusEl(list[list.length-1]); }
+        return; // plain Enter on a normal button = press it once (native)
+      }
+      if(!typing&&t!==root&&!(root&&root.contains(t)))return;
+      if(root&&(typing||t===root)){
+        e.preventDefault(); closeSug();
+        if(t.id==='login-password'&&!e.shiftKey){ const f=$('#sign-in-form'); if(f&&!f.dataset.busy)f_requestSubmit(f); return; }
+        if(t===root){ const list=flowFields(root); focusEl(list[0]||saveButton(root)); return; }
+        kbdMove(root,t,e.shiftKey?-1:1); return;
+      }
+      if(!root&&typing){
+        if(t.id==='bill-search'||t.id==='catalog-search'){ e.preventDefault(); focusFirstResult(); return; }
+        if(t.tagName==='INPUT'&&t.form)e.preventDefault();
+      }
       return;
     }
-    if(typing)return;
-    if(e.key==='/'){e.preventDefault();const s=$('#bill-search')||$('#catalog-search')||$('#so-search');if(s){s.focus();if(s.select)s.select();}return;}
-    if(e.key==='n'||e.key==='N'){if(can('bill'))newBill();return;}
-  });
+    // 5. Arrows: switch the FORM chip, walk lists on pages
+    if((e.key==='ArrowLeft'||e.key==='ArrowRight')&&t&&t.classList&&t.classList.contains('pick-chip')){
+      const chips=$$('.pick-chip',t.closest('.chip-row')).filter(c=>!c.disabled), i=chips.indexOf(t), n=chips[(i+(e.key==='ArrowRight'?1:-1)+chips.length)%chips.length];
+      if(n&&n!==t){ e.preventDefault(); kbdNextFocus='.pick-chip[data-id="'+n.dataset.id+'"]'; n.click(); if(document.contains(n))n.focus(); }
+      return;
+    }
+    if((e.key==='ArrowDown'||e.key==='ArrowUp')&&!root){
+      if(t&&(t.id==='bill-search'||t.id==='catalog-search')&&e.key==='ArrowDown'){ e.preventDefault(); focusFirstResult(); return; }
+      if(t&&t.matches&&t.matches(LIST_BTN_SEL)){
+        const all2=$$('[data-action="'+t.dataset.action+'"]',$('#page-content')).filter(visible), i=all2.indexOf(t), n=all2[i+(e.key==='ArrowDown'?1:-1)];
+        e.preventDefault();
+        if(n)n.focus(); else if(e.key==='ArrowUp'){ const s=$('#bill-search')||$('#catalog-search'); if(s)s.focus(); }
+        return;
+      }
+    }
+    if(e.key==='Escape'){
+      closeSug();
+      const d=topDialog();
+      if(d){ e.preventDefault(); if(e.repeat)return; if(d.dataset.dirty&&!confirm('Close without saving? What you typed will be lost.'))return; d.close(); }
+      return;
+    }
+    // 6. Global shortcuts (never while a window is open or while typing)
+    if(e.altKey&&!ctrl&&/^Digit[1-6]$/.test(e.code||'')||(e.altKey&&!ctrl&&/^[1-6]$/.test(e.key))){
+      if(root)return;
+      e.preventDefault();const nav=$$('.nav-item[data-page]'),n=nav[Number((e.code||'').replace('Digit','')||e.key)-1];if(n){page=n.dataset.page;render();}return;
+    }
+    if(typing||root||ctrl||e.altKey)return;
+    if(Date.now()-lastTypedAt<700&&(e.key==='n'||e.key==='N'||e.key==='/'))return; // a letter typed a moment ago in a box: never treat it as a shortcut
+    if(e.key==='?'){e.preventDefault();showKbdHelp();return;}
+    if(e.key==='/'){e.preventDefault();const s=$('#bill-search')||$('#catalog-search');if(s){s.focus();if(s.select)s.select();}return;}
+    if((e.key==='n'||e.key==='N')&&!e.repeat){if(can('bill')){e.preventDefault();newBill();}return;}
+  }
+  document.addEventListener('keydown',onKey,true);
+  // Focus the first field whenever a window opens or redraws; keep delete buttons out of Tab/Enter order
+  function dialogFocus(d){
+    if(!d||!d.open)return;
+    if(kbdNextFocus){ const el=$(kbdNextFocus,d); kbdNextFocus=null; if(el){ focusEl(el); return; } }
+    const a=document.activeElement;
+    if(a&&d.contains(a)&&a!==d&&!(a.matches&&a.matches('[data-action="close-dialog"]')))return;
+    const list=flowFields(d);
+    const target=list.find(f=>f.tagName==='INPUT'&&f.type!=='date'&&f.type!=='checkbox')||list.find(f=>f.tagName!=='BUTTON')||$('.modal-foot .button-primary',d)||saveButton(d);
+    if(target)target.focus();
+  }
+  new MutationObserver(muts=>{
+    const touched=new Set();
+    muts.forEach(m=>{
+      if(m.type==='childList'){ m.addedNodes.forEach(n=>{ if(n.nodeType===1){ if(n.matches&&n.matches(DANGER_SEL))n.setAttribute('tabindex','-1'); markDanger(n);} }); if(m.target.tagName==='DIALOG')touched.add(m.target); }
+      if(m.type==='attributes'&&m.target.tagName==='DIALOG'&&m.target.open)touched.add(m.target);
+    });
+    touched.forEach(d=>setTimeout(()=>dialogFocus(d),0));
+  }).observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['open']});
+  markDanger(document);
+  document.addEventListener('close',e=>{ if(e.target&&e.target.tagName==='DIALOG'){ closeSug(); delete e.target.dataset.dirty; } },true);
+  document.addEventListener('cancel',e=>{
+    const d=e.target; if(!d||d.tagName!=='DIALOG')return;
+    if(sugBox){ e.preventDefault(); closeSug(); return; }
+    if(d.dataset.dirty&&!confirm('Close without saving? What you typed will be lost.')){ e.preventDefault(); }
+  },true);
+  document.addEventListener('input',e=>{ const d=e.target&&e.target.closest&&e.target.closest('dialog'); if(d&&e.target.closest('form')&&e.target.id!=='so-search')d.dataset.dirty='1'; },true);
   function f_requestSubmit(form){if(form.requestSubmit)form.requestSubmit();else form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));}
   function sugValuesFor(input){
     if(input.id==='bill-customer')return all('customers').then(rows=>rows.filter(x=>form==='all'||x.businessId===(($('#bill-business')||{}).value)||x.businessId===undefined).map(x=>x.name));
@@ -670,8 +854,8 @@ import { firebaseConfig } from './firebase-config.js';
     return Promise.resolve([]);
   }
   function maybeSug(target){ if(target&&(target.id==='bill-customer'||target.id==='so-customer'||target.dataset.field==='productName'||target.dataset.field==='unit')){ if(target.readOnly||target.disabled){closeSug();return;} sugValuesFor(target).then(vals=>{ if(document.activeElement===target)openSug(target,vals); }); } }
-  document.addEventListener('focusin',e=>maybeSug(e.target));
-  document.addEventListener('input',e=>{ if(e.target&&(e.target.id==='bill-customer'||e.target.id==='so-customer'||e.target.dataset.field==='productName'||e.target.dataset.field==='unit')){ if(e.target.value.trim()===''){maybeSug(e.target);}else{sugValuesFor(e.target).then(vals=>openSug(e.target,vals));} } });
+  document.addEventListener('focusin',e=>{ if(sugBox&&e.target!==sugInput&&!(e.target.closest&&e.target.closest('.sug-fixed')))closeSug(); maybeSug(e.target); });
+  document.addEventListener('input',e=>{ if(e.target&&(e.target.id==='bill-customer'||e.target.id==='so-customer'||e.target.dataset.field==='productName'||e.target.dataset.field==='unit')){ if(e.target.value.trim()===''){maybeSug(e.target);}else{const el=e.target;sugValuesFor(el).then(vals=>{if(document.activeElement===el)openSug(el,vals);});} } });
   document.addEventListener('click',e=>{ if(sugBox&&!e.target.closest('.sug-fixed'))closeSug(); },true);
   window.addEventListener('scroll',e=>{if(sugBox&&sugBox.contains(e.target))return;closeSug();},true);
   document.addEventListener('click', e=>{
@@ -689,8 +873,8 @@ import { firebaseConfig } from './firebase-config.js';
     if(x==='export-new-backup')backupIncremental('manual').catch(()=>toast('Could not create backup.',true));
     if(x==='quick-backup'){const d=a.closest('dialog');if(d&&d.open)d.close();backupIncremental('prompt').catch(()=>toast('Could not create backup.',true));}
     if(x==='export-analytics')exportAnalytics().catch(()=>toast('Could not export this report.',true));
-    if(x==='add-item')$('#bill-items').insertAdjacentHTML('beforeend','<div class="item-row"><input class="input" data-field="productName" placeholder="Search product" required><input class="input" data-field="brand" placeholder="brand"><input class="input" type="number" min="0" step="any" data-field="price" placeholder="price"><input class="input" type="number" min="0.001" step="any" data-field="quantity" placeholder="0" required><input class="input" data-field="unit" placeholder="e.g. bag" required><button class="icon-button" type="button" data-action="remove-item">×</button></div>');
-    if(x==='remove-item'){const rows=$$('.item-row',$('#bill-items'));if(rows.length>1)a.closest('.item-row').remove();else toast('A bill needs one item.');}
+    if(x==='add-item')addItemRow();
+    if(x==='remove-item'){if(e.detail===0)return;removeItemRow(a.closest('.item-row'),false);}
     if(x==='view-bill')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){billDialog(b);$('#bill-dialog').showModal();}});
     if(x==='pick-business'){const inp=$('#bill-business');if(inp&&!inp.disabled){inp.value=a.dataset.id;$$('.pick-chip',a.closest('.chip-row')).forEach(c=>c.classList.toggle('active',c===a));inp.dispatchEvent(new Event('change',{bubbles:true}));}}
     if(x==='pick-record-business'){const inp=a.closest('form').querySelector('[name="businessId"]');if(inp){inp.value=a.dataset.id;$$('.pick-chip',a.closest('.chip-row')).forEach(c=>c.classList.toggle('active',c===a));}}
@@ -710,7 +894,7 @@ if(x==='add-supply'){supplyDialog({businessId:form==='all'?'sampurn':form,date:t
     if(x==='open-so-pdf'){if(!soCurrentFile){toast('No PDF attached.',true);return;}try{const b64=soCurrentFile.split(',')[1]||'';const arr=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));const url=URL.createObjectURL(new Blob([arr],{type:'application/pdf'}));window.open(url,'_blank');}catch(err){toast('Could not open the PDF.',true);}}
     if(x==='open-so-photo'){if(soCurrentFile)photoView(soCurrentFile);}
     if(x==='delete-supply')all('supplyorders').then(rows=>{const o=rows.find(v=>v.id===a.dataset.id);if(!o)return;if(!confirm('Delete this supply order? The bills stay; only the link and the order file are removed.'))return;all('bills').then(bills=>{const touched=bills.filter(b=>b.supplyOrderId===o.id);return Promise.all(touched.map(b=>{delete b.supplyOrderId;return put('bills',b);})).then(()=>del('supplyorders',o.id));}).then(()=>{soDlg().close();toast('Supply order deleted.');render();}).catch(()=>toast('Could not delete the supply order.',true));});
-        if(x==='save-return'){const billId=a.dataset.id;all('bills').then(items=>{const b=items.find(v=>v.id===billId);if(!b)return;const date=$('#return-date').value||today();const lines=[];b.items.forEach((it,idx)=>{const el=$('#ret-'+idx),q=el?parseFloat(el.value):0;if(q>0)lines.push({productName:it.productName,unit:it.unit||'',qty:q,price:Number(it.price)>0?Number(it.price):null});});if(!lines.length){toast('Enter how much came back for at least one item.',true);return;}b.returns=(b.returns||[]).concat([{id:uid(),date,items:lines}]);put('bills',b).then(()=>{retDlg().close();toast('Return saved.');render();all('bills').then(items2=>{const nb=items2.find(v=>v.id===billId);if(nb){billDialog(nb);$('#bill-dialog').showModal();}});});});}
+        if(x==='save-return'){if(a.dataset.busy)return;a.dataset.busy='1';setTimeout(()=>{delete a.dataset.busy;},1500);const billId=a.dataset.id;all('bills').then(items=>{const b=items.find(v=>v.id===billId);if(!b)return;const date=$('#return-date').value||today();const lines=[];b.items.forEach((it,idx)=>{const el=$('#ret-'+idx),q=el?parseFloat(el.value):0;if(q>0)lines.push({productName:it.productName,unit:it.unit||'',qty:q,price:Number(it.price)>0?Number(it.price):null});});if(!lines.length){toast('Enter how much came back for at least one item.',true);return;}b.returns=(b.returns||[]).concat([{id:uid(),date,items:lines}]);put('bills',b).then(()=>{retDlg().close();toast('Return saved.');render();all('bills').then(items2=>{const nb=items2.find(v=>v.id===billId);if(nb){billDialog(nb);$('#bill-dialog').showModal();}});});});}
     if(x==='delete-return'){const billId=a.dataset.id,rid=a.dataset.rid;if(confirm('Delete this return entry?'))all('bills').then(items=>{const b=items.find(v=>v.id===billId);if(!b)return;b.returns=(b.returns||[]).filter(r=>r.id!==rid);put('bills',b).then(()=>{toast('Return entry removed.');returnDialog(b);});});}
     if(x==='returns-report')returnsReportDialog();
     if(x==='customer-register')returnsReportDialog(a.dataset.name);
@@ -725,8 +909,8 @@ if(x==='add-supply'){supplyDialog({businessId:form==='all'?'sampurn':form,date:t
     if(x==='pick-role'&&ROLES[a.dataset.role]){role=a.dataset.role;$('#record-dialog').close();applyRole();render();saveUserRole(window.KiranaCloud&&window.KiranaCloud.user?window.KiranaCloud.user.email:'');toast('Role saved.');}
   });
   document.addEventListener('input',e=>{
-    if(e.target.id==='bill-search'){search=e.target.value;const n=e.target.value.length;renderBills().then(()=>{const field=$('#bill-search');if(field){field.focus();field.setSelectionRange(n,n);}});}
-    if(e.target.id==='catalog-search'){catalogSearch=e.target.value;const n=e.target.value.length;renderCatalog().then(()=>{const field=$('#catalog-search');if(field){field.focus();field.setSelectionRange(n,n);}});}
+    if(e.target.id==='bill-search'){search=e.target.value;const n=e.target.value.length,seq=++searchSeq;searchJob=renderBills().then(()=>{if(seq!==searchSeq)return;const field=$('#bill-search');if(field&&document.activeElement!==field&&(!document.activeElement||document.activeElement===document.body)){field.focus();field.setSelectionRange(n,n);}});}
+    if(e.target.id==='catalog-search'){catalogSearch=e.target.value;const n=e.target.value.length,seq=++searchSeq;searchJob=renderCatalog().then(()=>{if(seq!==searchSeq)return;const field=$('#catalog-search');if(field&&document.activeElement!==field&&(!document.activeElement||document.activeElement===document.body)){field.focus();field.setSelectionRange(n,n);}});}
   });
   document.addEventListener('change',e=>{
     if(e.target.id==='bill-period'){period=e.target.value;renderBills();}
@@ -739,10 +923,12 @@ if(x==='add-supply'){supplyDialog({businessId:form==='all'?'sampurn':form,date:t
   });
   document.addEventListener('submit',async e=>{
     if(e.target.id==='record-form'){
-      e.preventDefault();const f=new FormData(e.target), kind=f.get('kind'), oldId=f.get('recordId'), prior=oldId?(await all(kind)).find(x=>x.id===oldId):null, r={id:oldId||uid(),businessId:f.get('businessId'),name:String(f.get('name')).trim(),createdAt:prior?prior.createdAt:new Date().toISOString()};
+      e.preventDefault();const rf=e.target;if(rf.dataset.busy)return;rf.dataset.busy='1';try{const f=new FormData(e.target), kind=f.get('kind'), oldId=f.get('recordId'), prior=oldId?(await all(kind)).find(x=>x.id===oldId):null, r={id:oldId||uid(),businessId:f.get('businessId'),name:String(f.get('name')).trim(),createdAt:prior?prior.createdAt:new Date().toISOString()};
+      if(!r.name){toast('Enter a name.',true);return;}
       if(prior&&prior.isSample&&prior.name===r.name)r.isSample=true;
       if(kind==='products'){r.unit=String(f.get('unit')||'').trim();r.brand=String(f.get('brand')||'').trim();await put('products',r);}else{r.note=String(f.get('note')||'').trim();await put('customers',r);}
       $('#record-dialog').close();toast(kind==='products'?'Saved. Products are shared across all forms.':'Saved to this form.');render();
+      }finally{delete rf.dataset.busy;}
     }
 if(e.target.id==='supply-form'){
       e.preventDefault();
@@ -752,6 +938,7 @@ if(e.target.id==='supply-form'){
       if(!date){toast('Pick the order date.',true);return;}
       if(!file){toast('Attach the order image or PDF.',true);return;}
       const picked=$$('.so-pick').filter(c=>c.checked).map(c=>c.value);
+      const sf=e.target;if(sf.dataset.busy)return;sf.dataset.busy='1';
       (async()=>{try{
         const idInput=$('#so-id'),old=idInput&&idInput.value?(await all('supplyorders')).find(o=>o.id===idInput.value):null;
         const rec=old?Object.assign({},old):{id:uid(),businessId:businessId,createdAt:new Date().toISOString()};
@@ -761,10 +948,13 @@ if(e.target.id==='supply-form'){
         for(const bid of picked){const b=bills.find(x=>x.id===bid);if(b&&b.supplyOrderId!==rec.id){b.supplyOrderId=rec.id;await put('bills',b);}}
         for(const bid of prev){if(picked.indexOf(bid)<0){const b=bills.find(x=>x.id===bid);if(b){delete b.supplyOrderId;await put('bills',b);}}}
         soCurrentFile=rec.file||'';toast(old?'Supply order updated.':'Supply order saved.');render();supplyDialog(rec);
-      }catch(err){console.error(err);toast('Could not save the supply order.',true);}})();
+      }catch(err){console.error(err);toast('Could not save the supply order.',true);}finally{delete sf.dataset.busy;}})();
     }
         if(e.target.id==='bill-form'){
-      e.preventDefault();const rows=$$('.item-row',e.target), items=rows.map(r=>{const pr=$('[data-field="price"]',r),brEl=$('[data-field="brand"]',r);return {productName:$('[data-field="productName"]',r).value.trim(),brand:brEl?String(brEl.value||'').trim():'',quantity:Number($('[data-field="quantity"]',r).value),unit:$('[data-field="unit"]',r).value.trim(),price:pr&&pr.value!==''?Number(pr.value):null};});
+      e.preventDefault();
+      const bf=e.target; if(bf.dataset.busy)return; bf.dataset.busy='1';
+      try{
+      const allRows=$$('.item-row',bf), filled=allRows.filter(r=>!rowIsBlank(r)), rows=filled.length?filled:allRows.slice(0,1), items=rows.map(r=>{const pr=$('[data-field="price"]',r),brEl=$('[data-field="brand"]',r);return {productName:$('[data-field="productName"]',r).value.trim(),brand:brEl?String(brEl.value||'').trim():'',quantity:Number($('[data-field="quantity"]',r).value),unit:$('[data-field="unit"]',r).value.trim(),price:pr&&pr.value!==''?Number(pr.value):null};});
       const photoVal=$('#bill-photo-value'),gstVal=$('#bill-gst'),data={businessId:$('#bill-business').value,date:$('#bill-date').value,customerName:$('#bill-customer').value.trim(),notes:$('#bill-notes').value.trim(),items,photo:photoVal&&photoVal.value?photoVal.value:null,gst:gstVal&&gstVal.value!==''?parseFloat(gstVal.value):null};
       const idInput=e.target.querySelector('[name="billId"]'), billId=idInput?idInput.value:'';
       if(!data.customerName||!data.date||items.some(i=>!i.productName||!(i.quantity>0)||!i.unit)){toast('Fill in the customer, date, product, quantity, and unit.',true);return;}
@@ -772,6 +962,7 @@ if(e.target.id==='supply-form'){
         if(billId){const existing=(await all('bills')).find(b=>b.id===billId);if(existing){existing.customerName=data.customerName;existing.notes=data.notes;existing.items=items;existing.photo=data.photo;existing.gst=data.gst;const noInput=$('#bill-no');if(noInput){const nn=noInput.value.trim();if(!nn){toast('Bill number cannot be empty.',true);return;}const dup=(await all('bills')).some(x=>x.id!==billId&&x.businessId===existing.businessId&&x.billNumber===nn);if(dup){toast('This bill number is already used on another bill.',true);return;}existing.billNumber=nn;}await put('bills',existing);$('#bill-dialog').close();toast(existing.billNumber+' updated.');render();return;}}
         const added=await autoSaveCatalog(data).catch(()=>0);const saved=await makeBill(data);$('#bill-dialog').close();toast(saved.billNumber+' saved.');if(added)toast(added+(added===1?' new name saved to catalog.':' new names saved to catalog.'));billDialog(saved);$('#bill-dialog').showModal();render();
       }catch(err){console.error(err);toast(window.KiranaCloud&&window.KiranaCloud.configured?'Could not save. Check internet; shared bill numbering needs a connection.':'Could not save bill.',true);}
+      }finally{delete bf.dataset.busy;}
     }
   });
   $('#new-bill-top').addEventListener('click',()=>newBill());
