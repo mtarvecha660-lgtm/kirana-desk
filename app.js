@@ -1,4 +1,5 @@
 import { firebaseConfig } from './firebase-config.js';
+import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-export.js';
 
 /* Local-first dispatch register. Price on each bill line is optional; no GST or payment fields. */
 (() => {
@@ -8,7 +9,7 @@ import { firebaseConfig } from './firebase-config.js';
     { id: 'surya', name: 'Surya Supplies', prefix: 'SS', color: '#76b7a6' },
     { id: 'dhanraj', name: 'Sampurn Kirana Shop', prefix: 'SK', color: '#d1a66c' }
   ];
-  const names = { dashboard: 'Overview', bills: 'Dispatch records', catalog: 'Products & customers', analytics: 'Analytics', supply: 'Supply orders', backup: 'Backup & restore' };
+  const names = { dashboard: 'Overview', bills: 'Dispatch records', catalog: 'Products & customers', analytics: 'Analytics', supply: 'Supply orders', busy: 'Export to Busy', backup: 'Backup & restore' };
   const $ = (s, root = document) => root.querySelector(s);
   const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
   const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
@@ -245,9 +246,89 @@ import { firebaseConfig } from './firebase-config.js';
       '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Create a backup</div><div class="panel-caption">All forms, lists, bills, and bill counters in one file.</div></div></div><div style="padding:19px"><button class="button button-primary" data-action="export-new-backup">↓ Download new records only</button><button class="button button-light" data-action="export-backup" style="margin-left:8px">Full copy</button><p class="field-hint" style="line-height:1.6">New records only saves just what is not in any earlier backup file, and the file name carries the time, so an earlier file is never rewritten. Full copy saves everything in one file.</p></div></section><section class="panel"><div class="panel-head"><div><div class="panel-title">Restore a backup</div><div class="panel-caption">Replace local records with a saved backup.</div></div></div><div style="padding:19px"><label class="button button-light" for="backup-file">Choose backup file</label><input id="backup-file" type="file" accept="application/json,.json" hidden><p class="field-hint" style="line-height:1.6">Restore replaces current local data. Export it first if you want to keep a copy.</p></div></section></section>' + autoBackupPanel() + '</div>'+
       '<div class="backup-steps"><div class="backup-step"><span class="step-number">1</span><b>Export after billing</b><p>Download a fresh copy after each work session.</p></div><div class="backup-step"><span class="step-number">2</span><b>Keep another copy</b><p>Move the file to a separate drive or your brother’s computer.</p></div><div class="backup-step"><span class="step-number">3</span><b>Restore when needed</b><p>Choose the file on the computer where you want the records.</p></div></div>';
   }
+
+  /* ---------- Export to Busy (XML) ---------- */
+  const BUSY_TAX_CATS = ['GST 5%', 'GST 12% to 5%', 'Non-GST', 'GST 0%', 'GST 12%', 'GST 18%', 'Exempt'];
+  let busyFrom = null, busyTo = null, busyFirm = null;
+  async function busyConfig(){ return mergeConfig(await getSetting('busyExport')); }
+  const mapText = obj => Object.keys(obj).map(k => k + ' = ' + obj[k]).join('\n');
+  const parseMap = text => { const o = {}; String(text || '').split(/\r?\n/).forEach(line => { const i = line.indexOf('='); if (i > 0) { const k = line.slice(0, i).trim().toLowerCase(), v = line.slice(i + 1).trim(); if (k && v) o[k] = v; } }); return o; };
+  async function renderBusy() {
+    const cfg = await busyConfig(), bills = await all('bills'), products = await all('products');
+    if (!busyFirm) busyFirm = cfg.firmId || BIZ[0].id;
+    if (!busyTo) busyTo = today();
+    if (!busyFrom) busyFrom = busyTo.slice(0, 8) + '01';
+    const names = new Map();
+    products.forEach(p => { const n = String(p.name || '').trim(); if (n) names.set(n.toLowerCase(), n); });
+    bills.filter(b => b.businessId === busyFirm).forEach(b => (b.items || []).forEach(i => { const n = String(i.productName || '').trim(); if (n && !names.has(n.toLowerCase())) names.set(n.toLowerCase(), n); }));
+    const inRange = bills.filter(b => b.businessId === busyFirm && b.date >= busyFrom && b.date <= busyTo);
+    const field = (id, label, value, hint) => '<div><label class="field-label" for="' + id + '">' + label + '</label><input class="input" id="' + id + '" value="' + esc(value) + '">' + (hint ? '<p class="field-hint">' + hint + '</p>' : '') + '</div>';
+    const rows = Array.from(names.keys()).sort().map(k => { const m = cfg.items[k] || {}; return '<tr data-busy-item="' + esc(k) + '"><td class="strong-cell">' + esc(names.get(k)) + '</td>' +
+      '<td><input class="input" data-busy="busyName" placeholder="' + esc(names.get(k)) + '" value="' + esc(m.busyName || '') + '"></td>' +
+      '<td><input class="input" data-busy="taxCategory" list="busy-tax-cats" placeholder="' + esc(cfg.defaultTaxCategory || 'from bill GST %') + '" value="' + esc(m.taxCategory || '') + '"></td>' +
+      '<td><input class="input" data-busy="hsn" value="' + esc(m.hsn || '') + '" style="width:90px"></td>' +
+      '<td><input class="input" data-busy="unit" placeholder="auto" value="' + esc(m.unit || '') + '" style="width:80px"></td>' +
+      '<td style="text-align:center"><input type="checkbox" data-busy="param"' + (m.param ? ' checked' : '') + ' title="Send the brand as Busy parameter (only for items that have parameters in Busy)"></td></tr>'; }).join('');
+    $('#page-content').innerHTML = head('ACCOUNTING', 'Export to Busy', 'Turn Kirana Desk bills into Busy 21 sales vouchers (XML) and import them in Busy.') +
+      '<div class="notice"><strong>First time?</strong> Import into a <b>backup or test company</b> in Busy first and check the bills, stock and GST there. Names below must match the masters in Busy exactly. Bills with a line that has no price are skipped.</div>' +
+      '<datalist id="busy-tax-cats">' + BUSY_TAX_CATS.map(c => '<option value="' + esc(c) + '">').join('') + '</datalist>' +
+      '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Download for Busy</div><div class="panel-caption">One Busy Sale voucher per bill. One bill → one .xml file; several bills → a .zip of .xml files.</div></div></div>' +
+      '<div style="padding:19px;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end">' +
+      '<div><label class="field-label" for="busy-firm">FORM</label><select class="input" id="busy-firm">' + BIZ.map(b => '<option value="' + b.id + '"' + (b.id === busyFirm ? ' selected' : '') + '>' + esc(b.prefix + ' · ' + b.name) + '</option>').join('') + '</select></div>' +
+      '<div><label class="field-label" for="busy-from">FROM</label><input class="input" type="date" id="busy-from" value="' + busyFrom + '"></div>' +
+      '<div><label class="field-label" for="busy-to">TO</label><input class="input" type="date" id="busy-to" value="' + busyTo + '"></div>' +
+      '<div><button class="button button-primary" data-action="busy-export" id="busy-export-btn">↓ Download for Busy</button></div></div>' +
+      '<div style="padding:0 19px 19px"><p class="field-hint" id="busy-count">' + inRange.length + ' bill' + (inRange.length === 1 ? '' : 's') + ' in this range.</p><div id="busy-result"></div></div></section>' +
+      '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Busy names</div><div class="panel-caption">Exactly as they are written in Busy.</div></div><button class="button button-light button-small" data-action="busy-save">Save settings</button></div>' +
+      '<div style="padding:19px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">' +
+      '<div><label class="field-label" for="busy-partyMode">PARTY</label><select class="input" id="busy-partyMode"><option value="customer"' + (cfg.partyMode === 'customer' ? ' selected' : '') + '>Bill\'s customer (account must exist in Busy)</option><option value="cash"' + (cfg.partyMode === 'cash' ? ' selected' : '') + '>Always the cash party</option></select></div>' +
+      field('busy-cashParty', 'CASH SALE PARTY', cfg.cashParty, 'Used when the bill has no customer') +
+      field('busy-salesAccount', 'SALES ACCOUNT', cfg.salesAccount) + field('busy-cgstAccount', 'CGST ACCOUNT', cfg.cgstAccount) + field('busy-sgstAccount', 'SGST ACCOUNT', cfg.sgstAccount) +
+      field('busy-materialCentre', 'MATERIAL CENTRE', cfg.materialCentre) + field('busy-series', 'VOUCHER SERIES', cfg.series) + field('busy-stpt', 'SALE TYPE', cfg.stpt, 'L/GST-TaxIncl. = local sale, prices include GST') +
+      '<div><label class="field-label" for="busy-vchNoMode">VOUCHER NUMBER</label><select class="input" id="busy-vchNoMode"><option value="full"' + (cfg.vchNoMode === 'full' ? ' selected' : '') + '>Full bill number (RS/2026-27/0012)</option><option value="sequence"' + (cfg.vchNoMode === 'sequence' ? ' selected' : '') + '>Number only (12)</option></select></div>' +
+      '<div><label class="field-label" for="busy-defaultTaxCategory">DEFAULT TAX CATEGORY</label><input class="input" id="busy-defaultTaxCategory" list="busy-tax-cats" placeholder="from bill GST % (none → Non-GST)" value="' + esc(cfg.defaultTaxCategory) + '"><p class="field-hint">For items with no tax category below</p></div>' +
+      '<div><label class="field-label"><input type="checkbox" id="busy-billRef"' + (cfg.billRef ? ' checked' : '') + '> Bill-by-bill reference for the party</label><p class="field-hint">Like Busy does for credit customers. Not added for the cash party.</p></div>' +
+      '</div><div style="padding:0 19px 19px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">' +
+      '<div><label class="field-label" for="busy-units">UNITS (Kirana = Busy)</label><textarea class="input" id="busy-units" rows="5">' + esc(mapText(cfg.units)) + '</textarea></div>' +
+      '<div><label class="field-label" for="busy-customers">CUSTOMERS (Kirana name = Busy party), optional</label><textarea class="input" id="busy-customers" rows="5" placeholder="Sharma ji = Sharma General Store">' + esc(mapText(cfg.customers)) + '</textarea></div></div></section>' +
+      '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Items</div><div class="panel-caption">Busy item name (blank = same name), tax category, HSN, unit. Tick "Brand" only for items that have a brand parameter in Busy.</div></div><button class="button button-light button-small" data-action="busy-save">Save settings</button></div>' +
+      '<div class="table-wrap"><table class="data-table"><thead><tr><th>KIRANA ITEM</th><th>BUSY ITEM NAME</th><th>TAX CATEGORY</th><th>HSN</th><th>UNIT</th><th>BRAND</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" class="muted-cell">No products yet.</td></tr>') + '</tbody></table></div></section>';
+  }
+  function readBusyForm(prev){
+    const c = mergeConfig(prev), v = id => { const el = $('#busy-' + id); return el ? el.value.trim() : c[id]; };
+    ['partyMode','cashParty','salesAccount','cgstAccount','sgstAccount','materialCentre','series','stpt','vchNoMode','defaultTaxCategory'].forEach(k => { c[k] = v(k); });
+    if ($('#busy-billRef')) c.billRef = $('#busy-billRef').checked;
+    if ($('#busy-units')) c.units = parseMap($('#busy-units').value);
+    if ($('#busy-customers')) c.customers = parseMap($('#busy-customers').value);
+    c.firmId = busyFirm || c.firmId;
+    const items = Object.assign({}, c.items);
+    $$('[data-busy-item]').forEach(r => { const m = {}; $$('[data-busy]', r).forEach(i => { if (i.type === 'checkbox') { if (i.checked) m.param = true; } else if (i.value.trim()) m[i.dataset.busy] = i.value.trim(); }); if (Object.keys(m).length) items[r.dataset.busyItem] = m; else delete items[r.dataset.busyItem]; });
+    c.items = items;
+    if (!c.cashParty) c.cashParty = 'Cash';
+    return c;
+  }
+  async function saveBusy(quiet){ const c = readBusyForm(await getSetting('busyExport')); await saveSetting('busyExport', c); if (!quiet) toast('Busy settings saved.'); return c; }
+  function downloadBytes(bytes, name, type){ const url = URL.createObjectURL(new Blob([bytes], { type })), a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500); }
+  async function exportBusy(){
+    busyFrom = $('#busy-from').value; busyTo = $('#busy-to').value; busyFirm = $('#busy-firm').value;
+    if (!busyFrom || !busyTo || busyFrom > busyTo) { toast('Choose a valid date range.', true); return; }
+    const cfg = await saveBusy(true);
+    const bills = (await all('bills')).filter(b => b.businessId === busyFirm && b.date >= busyFrom && b.date <= busyTo);
+    const out = buildBusyExport(bills, cfg), b = biz(busyFirm);
+    const res = $('#busy-result');
+    const skippedHtml = out.skipped.length ? '<div class="notice" style="margin-top:10px"><strong>Skipped ' + out.skipped.length + ':</strong> ' + out.skipped.map(s => esc(s.billNumber) + ' (' + esc(s.reason) + ')').join('; ') + '</div>' : '';
+    const unmappedHtml = out.unmapped.length ? '<p class="field-hint" style="margin-top:8px">No tax category set for: ' + out.unmapped.map(esc).join(', ') + '. Used ' + esc(cfg.defaultTaxCategory || 'the bill\'s GST % (Non-GST if none)') + '. Set them in Items below if that is wrong.</p>' : '';
+    if (!out.files.length) { if (res) res.innerHTML = '<p class="field-hint">No bills to export in this range.</p>' + skippedHtml; toast('No bills with prices in this range.', true); return; }
+    const tag = b.prefix + '-' + busyFrom + '-to-' + busyTo;
+    if (out.files.length === 1) downloadBytes(latin1Bytes(out.files[0].xml), out.files[0].name, 'application/xml');
+    else downloadBytes(makeZip(out.files.map(f => ({ name: f.name, bytes: latin1Bytes(f.xml) }))), 'Busy-Sales-' + tag + '.zip', 'application/zip');
+    const total = out.files.reduce((s, f) => s + f.voucher.total, 0);
+    if (res) res.innerHTML = '<p class="field-hint" style="color:inherit"><b>' + out.files.length + ' voucher' + (out.files.length === 1 ? '' : 's') + '</b> · ₹' + number(Math.round(total * 100) / 100) + ' total · ' + (out.files.length === 1 ? esc(out.files[0].name) : 'zip: unzip into an empty folder, then import that folder in Busy') + '</p>' + unmappedHtml + skippedHtml;
+    toast('Busy file downloaded: ' + out.files.length + ' voucher' + (out.files.length === 1 ? '' : 's') + '.');
+  }
   async function render() {
     $('#page-crumb').textContent=names[page]; $$('.main-nav [data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page)); $('#bill-nav-count').textContent=String((await all('bills')).length); all('supplyorders').then(rows=>{const c=$('#supply-nav-count');if(c)c.textContent=String(rows.length);});
-    if(page==='dashboard')return renderDashboard(); if(page==='bills')return renderBills(); if(page==='catalog')return renderCatalog(); if(page==='supply')return renderSupply(); if(page==='analytics')return renderAnalytics(); if(page==='backup')return renderBackup();
+    if(page==='dashboard')return renderDashboard(); if(page==='bills')return renderBills(); if(page==='catalog')return renderCatalog(); if(page==='supply')return renderSupply(); if(page==='analytics')return renderAnalytics(); if(page==='backup')return renderBackup(); if(page==='busy')return renderBusy();
   }
   function go(p){page=p;render().catch(e=>{console.error(e);toast('Could not load this page.',true);});}
   function billDialog(data, editMode) {
@@ -630,7 +711,7 @@ import { firebaseConfig } from './firebase-config.js';
     ['Esc','Close the suggestion list, then the window (asks if unsaved)'],
     ['N','New bill (when no window is open)'],
     ['/','Search on Records or Catalog, then Down arrow + Enter opens a result'],
-    ['Alt + 1 to 6','Overview, Records, Supply, Catalog, Analytics, Backup'],
+    ['Alt + 1 to 7','Overview, Records, Supply, Catalog, Analytics, Backup, Export to Busy'],
     ['?','Show these shortcuts']
   ];
   function showKbdHelp(){
@@ -808,7 +889,7 @@ import { firebaseConfig } from './firebase-config.js';
       return;
     }
     // 6. Global shortcuts (never while a window is open or while typing)
-    if(e.altKey&&!ctrl&&/^Digit[1-6]$/.test(e.code||'')||(e.altKey&&!ctrl&&/^[1-6]$/.test(e.key))){
+    if(e.altKey&&!ctrl&&/^Digit[1-7]$/.test(e.code||'')||(e.altKey&&!ctrl&&/^[1-7]$/.test(e.key))){
       if(root)return;
       e.preventDefault();const nav=$$('.nav-item[data-page]'),n=nav[Number((e.code||'').replace('Digit','')||e.key)-1];if(n){page=n.dataset.page;render();}return;
     }
@@ -872,6 +953,8 @@ import { firebaseConfig } from './firebase-config.js';
     if(x==='export-backup')backup().catch(()=>toast('Could not create backup.',true));
     if(x==='export-new-backup')backupIncremental('manual').catch(()=>toast('Could not create backup.',true));
     if(x==='quick-backup'){const d=a.closest('dialog');if(d&&d.open)d.close();backupIncremental('prompt').catch(()=>toast('Could not create backup.',true));}
+    if(x==='busy-export')exportBusy().catch(err=>{console.error(err);toast('Could not make the Busy file.',true);});
+    if(x==='busy-save')saveBusy().catch(()=>toast('Could not save Busy settings.',true));
     if(x==='export-analytics')exportAnalytics().catch(()=>toast('Could not export this report.',true));
     if(x==='add-item')addItemRow();
     if(x==='remove-item'){if(e.detail===0)return;removeItemRow(a.closest('.item-row'),false);}
@@ -914,6 +997,7 @@ if(x==='add-supply'){supplyDialog({businessId:form==='all'?'sampurn':form,date:t
   });
   document.addEventListener('change',e=>{
     if(e.target.id==='bill-period'){period=e.target.value;renderBills();}
+    if(e.target.id==='busy-firm'||e.target.id==='busy-from'||e.target.id==='busy-to'){busyFirm=$('#busy-firm').value;busyFrom=$('#busy-from').value;busyTo=$('#busy-to').value;if(e.target.id==='busy-firm')saveBusy(true).then(()=>renderBusy());else all('bills').then(bs=>{const n=bs.filter(b=>b.businessId===busyFirm&&b.date>=busyFrom&&b.date<=busyTo).length;const c=$('#busy-count');if(c)c.textContent=n+' bill'+(n===1?'':'s')+' in this range.';});}
     if(e.target.id==='analytics-period'){analyticsPeriod=e.target.value;renderAnalytics();}
     if(e.target.id==='bill-business'){const key=e.target.value;billDialog({businessId:key,date:$('#bill-date').value,customerName:$('#bill-customer').value,items:$$('.item-row',$('#bill-items')).map(r=>Object.fromEntries($$('[data-field]',r).map(i=>[i.dataset.field,i.value]))),notes:$('#bill-notes').value,photo:$('#bill-photo-value')?$('#bill-photo-value').value:'',gst:$('#bill-gst')?$('#bill-gst').value:'',supplyOrderId:(document.querySelector('#bill-form [name="soId"]')||{}).value||''});}
     if(e.target.dataset.field==='productName'){const name=e.target.value.trim().toLowerCase(), row=e.target.closest('.item-row'), selectedBusiness=$('#bill-business')?.value;all('products').then(items=>{const matches=items.filter(p=>p.name.toLowerCase()===name);const item=matches.find(p=>p.brand)||matches[0];const unit=$('[data-field="unit"]',row);if(item&&item.unit&&unit&&!unit.value)unit.value=item.unit;const brIn=$('[data-field="brand"]',row);if(item&&brIn&&!brIn.value)brIn.value=item.brand||'';});}
