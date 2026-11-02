@@ -283,7 +283,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
       '<div style="padding:19px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">' +
       '<div><label class="field-label" for="busy-partyMode">PARTY</label><select class="input" id="busy-partyMode"><option value="customer"' + (cfg.partyMode === 'customer' ? ' selected' : '') + '>Bill\'s customer (account must exist in Busy)</option><option value="cash"' + (cfg.partyMode === 'cash' ? ' selected' : '') + '>Always the cash party</option></select></div>' +
       field('busy-cashParty', 'CASH SALE PARTY', cfg.cashParty, 'Used when the bill has no customer') +
-      field('busy-salesAccount', 'SALES ACCOUNT', cfg.salesAccount) + field('busy-cgstAccount', 'CGST ACCOUNT', cfg.cgstAccount) + field('busy-sgstAccount', 'SGST ACCOUNT', cfg.sgstAccount) +
+      field('busy-companyName', 'BUSY COMPANY NAME', cfg.companyName, 'Exactly as Busy shows it (spaces + year). Needed for Busy Paste') + field('busy-salesAccount', 'SALES ACCOUNT', cfg.salesAccount) + field('busy-cgstAccount', 'CGST ACCOUNT', cfg.cgstAccount) + field('busy-sgstAccount', 'SGST ACCOUNT', cfg.sgstAccount) +
       field('busy-materialCentre', 'MATERIAL CENTRE', cfg.materialCentre) + field('busy-series', 'VOUCHER SERIES', cfg.series) + field('busy-stpt', 'SALE TYPE', cfg.stpt, 'L/GST-TaxIncl. = local sale, prices include GST') +
       '<div><label class="field-label" for="busy-vchNoMode">VOUCHER NUMBER</label><select class="input" id="busy-vchNoMode"><option value="full"' + (cfg.vchNoMode === 'full' ? ' selected' : '') + '>Full bill number (RS/2026-27/0012)</option><option value="sequence"' + (cfg.vchNoMode === 'sequence' ? ' selected' : '') + '>Number only (12)</option></select></div>' +
       '<div><label class="field-label" for="busy-defaultTaxCategory">DEFAULT TAX CATEGORY</label><input class="input" id="busy-defaultTaxCategory" list="busy-tax-cats" placeholder="from bill GST % (none → Non-GST)" value="' + esc(cfg.defaultTaxCategory) + '"><p class="field-hint">For items with no tax category below</p></div>' +
@@ -296,7 +296,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
   }
   function readBusyForm(prev){
     const c = mergeConfig(prev), v = id => { const el = $('#busy-' + id); return el ? el.value.trim() : c[id]; };
-    ['partyMode','cashParty','salesAccount','cgstAccount','sgstAccount','materialCentre','series','stpt','vchNoMode','defaultTaxCategory'].forEach(k => { c[k] = v(k); });
+    ['partyMode','companyName','cashParty','salesAccount','cgstAccount','sgstAccount','materialCentre','series','stpt','vchNoMode','defaultTaxCategory'].forEach(k => { c[k] = v(k); });
     if ($('#busy-billRef')) c.billRef = $('#busy-billRef').checked;
     if ($('#busy-units')) c.units = parseMap($('#busy-units').value);
     if ($('#busy-customers')) c.customers = parseMap($('#busy-customers').value);
