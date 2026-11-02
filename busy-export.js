@@ -15,6 +15,7 @@ export const BUSY_DEFAULTS = {
   sgstAccount: 'SGST Output',
   partyMode: 'customer',        // 'customer' = bill's customer name is the Busy party; 'cash' = always cashParty
   cashParty: 'Cash',
+  companyName: 'Ridhhi Sidhi Stores            (2025-26)', // CompName: Busy's Paste needs it to match the open company (verified by paste test, Nov 2)
   vchNoMode: 'full',            // 'full' = RS/2026-27/0012 ; 'sequence' = 12
   defaultTaxCategory: '',       // used for items with no mapping; '' = from the bill's GST % (none → Non-GST)
   brandAsParam: false,          // send every line's brand as Busy parameter Param1 (per item: items[name].param)
@@ -135,7 +136,7 @@ export function voucherXml(v, cfgIn) {
     x += '<PendingBillDetails><BillDetail>' + tag('MasterName1', v.party) + '<BillRefs>' + tag('Method', 1) + tag('SrNo', 1) + tag('RefNo', N) + tag('Date', D) + tag('DueDate', D) +
       tag('Value1', num(-v.total)) + tag('VchType', 9) + tag('MfgDate', D) + '</BillRefs></BillDetail></PendingBillDetails>';
   }
-  x += '<POSVchData><CarrySettlement>True</CarrySettlement></POSVchData></Sale>';
+  x += '<POSVchData><CarrySettlement>True</CarrySettlement></POSVchData>' + (cfg.companyName ? tag('CompName', cfg.companyName) : '') + '</Sale>';
   return x;
 }
 
