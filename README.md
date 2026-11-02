@@ -70,3 +70,31 @@ The app syncs products, customers, and records through Firestore. Bill numbers u
 
 Firebase Hosting serves the static PWA over HTTPS. Firebase's current setup guide requires a Firebase project before Hosting setup and deploys the static app with the Firebase CLI: https://firebase.google.com/docs/hosting/quickstart
 
+## Export to Busy
+
+Kirana Desk can turn its bills into **Busy 21 sales vouchers** (XML), so you don't type them again in Busy.
+The file format is copied from a real Busy 21 (Rel 13.0) export of sale no. 37 (root `<Sale>`, `iso8859-1`, sale type `L/GST-TaxIncl.`).
+
+> ⚠️ **Do the first import on a BACKUP or TEST company in Busy**, not on the real books. Check a few bills, the stock and the GST report there first. Take a Busy backup before every import.
+
+### In Kirana Desk
+1. Open **Export to Busy** (sidebar, or Alt+7).
+2. **Busy names** — type them exactly as they are in Busy: sales account (`Sales`), `CGST Output`, `SGST Output`, material centre (`Main Store`), series (`Main`), and the cash party (`Cash`) used for bills with no customer. Party: either the bill's customer (that account must already exist in Busy; use the Customers box to map a Kirana name to a different Busy name) or always the cash party.
+3. **Items** — for each product set the Busy item name (blank = same name), tax category (`GST 5%`, `GST 12% to 5%`, `Non-GST`…), HSN and unit. Items with no tax category use *Default tax category*, or the bill's GST % (no GST on the bill → `Non-GST`). Tick **Brand** only for items that have a brand parameter in Busy (Bembino, Fortune…). Press **Save settings**.
+4. Pick the **form** (RS = Riddhi Siddhi Store), **from / to** dates, press **↓ Download for Busy**.
+   * 1 bill → one file `Sales-RS-2026-27-0041.xml`
+   * several bills → a `.zip` with one `.xml` per bill (the way Busy itself writes `Sales-37.xml`). Unzip it into a new empty folder.
+   * Bills with a line that has **no price** are skipped and listed on screen. Prices are taken as **including GST**; Busy's CGST/SGST split is reproduced to the paisa.
+
+### In Busy 21
+1. Open the **test company**.
+2. **Administration → Data Export Import → Data Export/Import (XML) → Import Data**.
+3. Point it to the folder that holds the `.xml` file(s) and press **OK**.
+4. Open the imported sales vouchers (Sales register, or Modify voucher) and compare a few bills with Kirana Desk: party, items, qty, amount, CGST/SGST.
+5. If Busy reports a missing master (item, unit, account, tax category), create it in Busy or fix the name in Kirana Desk → Export to Busy, and export again.
+
+**Voucher numbers.** By default the Busy voucher number is the full Kirana bill number (`RS/2026-27/0041`), so it never clashes with bills already typed in Busy. Choose *Number only* to send `41` instead.
+
+**Not handled yet:** returns, discounts, round-off, inter-state (IGST) sales — only local, tax-inclusive sales like Busy sale type `L/GST-TaxIncl.`. Busy settings are saved in this browser only (not synced).
+
+Tests: `node tests/busy-export.test.mjs` (compares with the real Busy voucher in `tests/fixtures/busy-sale-37.xml`, party name anonymised) and `node tests/busy-export.e2e.test.mjs` (Playwright: downloads the file and checks it).
