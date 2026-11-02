@@ -71,7 +71,8 @@ myItems.forEach((b, k) => { const sb = blocks(sample, 'ItemDetail')[k]; fieldsSa
   if (val(b, f) !== val(sb, f)) fm.push(sItems[k].name + '.' + f + ' ' + val(b, f) + ' vs ' + val(sb, f)); }); });
 ok(!fm.length, 'per-line XML fields equal the sample: ' + fieldsSame.join(', ') + (fm.length ? '\n     ' + fm.join('\n     ') : ''));
 eq(val(xml, 'Value1'), val(sample, 'Value1'), 'bill-by-bill reference amount');
-ok(!/tmp[A-Za-z]*Code|OriginalID|OldIdentity|CompName/.test(xml), 'no Busy-internal codes (tmp*Code, OriginalID, OldIdentity, CompName)');
+ok(!/tmp[A-Za-z]*Code|OriginalID|OldIdentity/.test(xml), 'no Busy-internal codes (tmp*Code, OriginalID, OldIdentity)');
+ok(/<CompName>Ridhhi Sidhi Stores {12}\(2025-26\)<\/CompName><\/Sale>$/.test(xml), 'CompName present (Busy Paste needs it)');
 const tagsSample = new Set([...sample.matchAll(/<([A-Za-z0-9]+)[ >\/]/g)].map(m => m[1]));
 const extra = [...new Set([...xml.matchAll(/<([A-Za-z0-9]+)[ >\/]/g)].map(m => m[1]))].filter(t => !tagsSample.has(t));
 ok(!extra.length, 'every tag we write exists in the real Busy export' + (extra.length ? ' — new: ' + extra.join(',') : ''));
