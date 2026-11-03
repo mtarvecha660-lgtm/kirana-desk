@@ -14,8 +14,8 @@ An offline-capable digital dispatch register and analytics tool for Riddhi Siddh
 ## Data safety
 
 - **Recycle bin.** Deleting a bill, product, customer, return entry or supply order never erases it. The record is marked `deleted: true` with `deletedAt` / `deletedBy` and hidden from lists, totals, analytics and the Busy export. Backup & restore → **Recycle bin** lists everything deleted, with **Restore**. A deleted bill keeps its number, so the number is never given to a new bill.
-- **Edit history.** Each saved edit of a bill keeps the version before it (`history`: `editedAt`, `editedBy`, previous version; the photo itself is not copied). The bill view shows **Edited** and **View previous versions**; the Records list marks edited bills.
-- **Daily backup.** Once a day, on the first open of the app, a full copy (`kirana-backup-YYYY-MM-DD.json`, Recycle bin and history included) is saved to the automatic backup folder if one is set up, otherwise to Downloads. The Backup page shows **Last backup** and a warning after 3 days without one. It can be turned off per device (e.g. on a phone).
+- **No edit history.** Editing a bill overwrites it; previous versions are not stored (to save space). Old `history` / `editedAt` / `editedBy` fields from the short-lived edit-history build are dropped when the app opens, when the bill is next saved, and when a backup is restored.
+- **Daily backup.** Once a day, on the first open of the app, a full copy (`kirana-backup-YYYY-MM-DD.json`, Recycle bin included) is saved to the automatic backup folder if one is set up, otherwise to Downloads. The Backup page shows **Last backup** and a warning after 3 days without one. It can be turned off per device (e.g. on a phone).
 - **Restore** downloads a safety copy of the current data first, never lowers a bill counter, and in the shared workspace writes the restored records back to the cloud.
 - **Firestore rules** (`firestore.rules`): only the two family emails can read/create/update; delete is denied for everyone. Paste the file into Firebase console → Firestore Database → Rules → Publish.
 
