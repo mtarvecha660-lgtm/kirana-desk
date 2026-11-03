@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
   Kirana Desk data-safety test: Recycle bin (soft delete), restore, bill numbers never reused,
-  edit history, automatic daily backup (once per day), and backup → restore round trip.
+  no edit history kept (an edit overwrites; old history fields are dropped), automatic daily backup (once per day), and backup → restore round trip.
   Runs on local data only (firebase-config.js is swapped for a blank config inside the test browser).
 
   Run:   node tests/data-safety.e2e.test.mjs            (serves this folder on a local port)
@@ -151,28 +151,39 @@ async function main() {
   await page.click(`#recycle-bin [data-action=restore-deleted][data-id="${pid}"]`); await W(page, 600);
   ok((await raw(page, 'products')).find(x => x.id === pid).deleted === false, 'product restored from the Recycle bin');
 
-  // ---------- 4. Edit history ----------
-  console.log('\n4. Edit history');
+  // ---------- 4. No edit history ----------
+  console.log('\n4. No edit history is stored');
+  const putRaw = (p, store, rec) => p.evaluate(([s, v]) => new Promise(res => { const r = indexedDB.open('kirana-desk'); r.onsuccess = () => { const tx = r.result.transaction(s, 'readwrite'); tx.objectStore(s).put(v); tx.oncomplete = res; }; }), [store, rec]);
+  const noHist = x => !!x && !('history' in x) && !('editedAt' in x) && !('editedBy' in x);
   await openBill(page, b1.id);
   await page.click('#bill-dialog [data-action=edit-bill]'); await W(page, 600);
   await page.fill('#bill-customer', 'Safety One Edited');
   await page.click('#bill-dialog button[type=submit]'); await W(page, 800);
   let e1 = (await raw(page, 'bills')).find(x => x.id === b1.id);
-  eq((e1.history || []).length, 1, 'editing a saved bill keeps one previous version');
-  eq(e1.history[0].prev.customerName, 'Safety One', 'previous version has the old customer name');
-  ok(e1.history[0].editedAt && e1.history[0].editedBy === 'this computer' && e1.editedAt, 'editedAt / editedBy recorded');
+  eq(e1.customerName, 'Safety One Edited', 'editing a saved bill saves the change');
+  ok(noHist(e1), 'editing stores no previous version (no history / editedAt / editedBy)');
   await openBill(page, b1.id);
-  ok(await page.evaluate(() => /Edited/.test((document.getElementById('bill-safety-line') || {}).textContent || '')), 'bill view shows "Edited"');
-  await page.click('#bill-dialog [data-action=bill-history]'); await W(page, 500);
-  ok(await page.evaluate(() => { const d = document.querySelector('#history-dialog[open]'); if (!d) return false; const caps = [...d.querySelectorAll('.panel-caption')].map(c => c.textContent); return caps.length === 2 && /Safety One Edited/.test(caps[0]) && /· Safety One$/.test(caps[1]) && /Before edit 1/.test(d.textContent); }), 'View previous versions shows the current and the old version');
+  ok(await page.evaluate(() => !document.getElementById('bill-safety-line') && !/Edited/.test(document.getElementById('bill-dialog').textContent) && !document.querySelector('[data-action=bill-history]')), 'bill view shows no "Edited" line and no "View previous versions"');
   await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach(d => d.close()));
   await press(page, 'Alt+2'); await W(page, 400);
-  ok(await page.evaluate(() => [...document.querySelectorAll('#page-content .tag.red')].some(t => t.textContent === 'edited')), 'Records list marks the bill as edited');
+  ok(await page.evaluate(() => ![...document.querySelectorAll('#page-content .tag')].some(t => /edited/i.test(t.textContent))), 'Records list has no "edited" tag');
+  // a bill that still carries history from the old build: shown without it, and the field is dropped on its next save
+  const oldHist = { history: [{ editedAt: '2026-11-03T10:00:00.000Z', editedBy: 'this computer', prev: { customerName: 'Old name', items: e1.items } }], editedAt: '2026-11-03T10:00:00.000Z', editedBy: 'this computer' };
+  await putRaw(page, 'bills', Object.assign({}, e1, oldHist));
   await openBill(page, b1.id);
+  ok(await page.evaluate(() => !document.getElementById('bill-safety-line') && !document.querySelector('[data-action=bill-history]')), 'an old bill with stored history shows no history UI');
   await page.click('#bill-dialog [data-action=edit-bill]'); await W(page, 600);
   await page.click('#bill-dialog button[type=submit]'); await W(page, 800);
   e1 = (await raw(page, 'bills')).find(x => x.id === b1.id);
-  eq((e1.history || []).length, 1, 'saving with no change adds no history entry');
+  ok(noHist(e1), 'its next save drops the old history field (space freed)');
+  eq(e1.customerName + '|' + e1.billNumber + '|' + JSON.stringify(e1.items), 'Safety One Edited|' + b1.billNumber + '|' + JSON.stringify(b1.items), 'the rest of the bill is unchanged');
+  // on load: old history is stripped from every bill, nothing else changes (deleted flags stay)
+  const r5 = (await raw(page, 'bills')).find(x => x.id === b5.id);
+  await putRaw(page, 'bills', Object.assign({}, r5, oldHist));
+  await page.reload(); await page.waitForSelector('#page-content .page-head'); await W(page, 1500);
+  const r5b = (await raw(page, 'bills')).find(x => x.id === b5.id);
+  ok(noHist(r5b), 'opening the app strips old history from stored bills');
+  eq(JSON.stringify(r5b), JSON.stringify(r5), 'stripping on load leaves every other field exactly as it was');
 
   // ---------- 5. Warning badge ----------
   console.log('\n5. Stale backup warning');
@@ -190,7 +201,7 @@ async function main() {
   const file = dailies(page)[1].file, data = JSON.parse(fs.readFileSync(file, 'utf8'));
   eq(data.bills.length, 5, 'daily backup has every bill, including deleted ones');
   ok(data.bills.find(b => b.id === b2.id).deleted === true, 'deleted bill is in the backup, still marked deleted');
-  eq((data.bills.find(b => b.id === b1.id).history || []).length, 1, 'edit history is in the backup');
+  ok(data.bills.every(noHist), 'the backup carries no edit history');
   ok(data.products.length > 0 && data.customers.length > 0 && Array.isArray(data.counters) && Array.isArray(data.supplyorders), 'products, customers, counters and supply orders are in the backup');
   ok(!/No backup in/.test(await page.evaluate(() => document.body.textContent)), 'warning clears after the new backup');
   const before = { bills: await raw(page, 'bills'), products: await raw(page, 'products'), customers: await raw(page, 'customers') };
@@ -200,7 +211,9 @@ async function main() {
   const B = await open(); const p2 = B.page; await W(p2, 2600);
   await press(p2, 'Alt+6'); await W(p2, 500);
   p2.__confirms = [];
-  await p2.setInputFiles('#backup-file', file); await W(p2, 1500);
+  const histFile = path.join(tmp, 'with-history.json');
+  fs.writeFileSync(histFile, JSON.stringify(Object.assign({}, data, { bills: data.bills.map(b => b.id === b1.id ? Object.assign({}, b, oldHist) : b) })));
+  await p2.setInputFiles('#backup-file', histFile); await W(p2, 1500);
   ok(p2.__confirms.some(m => /Restore 5 bills/.test(m)), 'restore asks before replacing');
   ok(p2.downloads.some(d => /^kirana-before-restore-/.test(d.name)), 'a safety copy of the current data is downloaded before restoring');
   const after = { bills: await raw(p2, 'bills'), products: await raw(p2, 'products'), customers: await raw(p2, 'customers') };
@@ -208,7 +221,7 @@ async function main() {
   eq(after.products.length, before.products.length, 'all products restored');
   eq(after.customers.length, before.customers.length, 'all customers restored');
   ok(after.bills.find(b => b.id === b2.id).deleted === true, 'deleted bill comes back in the Recycle bin, not in Records');
-  eq((after.bills.find(b => b.id === b1.id).history || []).length, 1, 'edit history survives the round trip');
+  ok(after.bills.every(noHist), 'restoring a backup that has old history fields does not bring them back');
   eq(JSON.stringify(after.bills.find(b => b.id === b1.id).items), JSON.stringify(before.bills.find(b => b.id === b1.id).items), 'bill lines are identical after restore');
   await press(p2, 'Alt+1'); await W(p2, 300); await press(p2, 'Alt+6'); await W(p2, 500);
   ok(await p2.evaluate(no => document.getElementById('recycle-bin').textContent.includes(no), b2.billNumber), 'restored Recycle bin lists the deleted bill');
