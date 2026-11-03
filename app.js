@@ -1,5 +1,5 @@
 import { firebaseConfig } from './firebase-config.js';
-import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-export.js';
+import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, findBillByNo } from './busy-export.js';
 
 /* Local-first dispatch register. Price on each bill line is optional; no GST or payment fields. */
 (() => {
@@ -165,7 +165,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
     if (!items.length) return empty('No bills yet', 'Create your first dispatch bill. Each form gets its own number sequence for every financial year.', can('bill') ? '<button class="button button-primary" data-action="new-bill">＋ Create first bill</button>' : '');
     return '<div class="table-wrap"><table class="data-table"><thead><tr><th>BILL NUMBER</th>' + (showForm ? '<th>FORM</th>' : '') + '<th>CUSTOMER</th><th>DATE</th><th>ITEMS</th><th>QUANTITY</th><th></th></tr></thead><tbody>' + items.map(b => {
       const q = b.items.reduce((s, i) => s + Number(i.quantity || 0), 0);
-      return '<tr><td class="strong-cell">' + esc(b.billNumber) + '</td>' + (showForm ? '<td>' + chip(b.businessId) + '</td>' : '') + '<td>' + esc(b.customerName) + '</td><td class="muted-cell">' + dateLabel(b.date) + '</td><td>' + b.items.length + '</td><td>' + number(q) + '</td><td><button class="icon-button" data-action="view-bill" data-id="' + esc(b.id) + '" title="View record">↗</button></td></tr>';
+      return '<tr><td class="strong-cell">' + esc(b.billNumber) + '</td>' + (showForm ? '<td>' + chip(b.businessId) + '</td>' : '') + '<td>' + esc(b.customerName) + '</td><td class="muted-cell">' + dateLabel(b.date) + '</td><td>' + b.items.length + '</td><td>' + number(q) + '</td><td class="row-actions" style="white-space:nowrap"><button class="icon-button" data-action="view-bill" data-id="' + esc(b.id) + '" title="View record">↗</button><button class="icon-button" data-action="busy-one" data-id="' + esc(b.id) + '" tabindex="-1" title="Export this bill to Busy (.xml) · Alt+B on a selected row">⇩</button></td></tr>';
     }).join('') + '</tbody></table></div>';
   }
   async function renderDashboard() {
@@ -270,7 +270,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
       '<td><input class="input" data-busy="unit" placeholder="auto" value="' + esc(m.unit || '') + '" style="width:80px"></td>' +
       '<td style="text-align:center"><input type="checkbox" data-busy="param"' + (m.param ? ' checked' : '') + ' title="Send the brand as Busy parameter (only for items that have parameters in Busy)"></td></tr>'; }).join('');
     $('#page-content').innerHTML = head('ACCOUNTING', 'Export to Busy', 'Turn Kirana Desk bills into Busy 21 sales vouchers (XML) and import them in Busy.') +
-      '<div class="notice"><strong>First time?</strong> Import into a <b>backup or test company</b> in Busy first and check the bills, stock and GST there. Names below must match the masters in Busy exactly. Bills with a line that has no price are skipped.</div>' +
+      '<div class="notice"><strong>First time?</strong> Import into a <b>backup or test company</b> in Busy first and check the bills, stock and GST there. Names below must match the masters in Busy exactly. Bills with a line that has no price are skipped. One bill only? Use Single bill below, or open the bill and press Export to Busy.</div>' +
       '<datalist id="busy-tax-cats">' + BUSY_TAX_CATS.map(c => '<option value="' + esc(c) + '">').join('') + '</datalist>' +
       '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Download for Busy</div><div class="panel-caption">One Busy Sale voucher per bill. One bill → one .xml file; several bills → a .zip of .xml files.</div></div></div>' +
       '<div style="padding:19px;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end">' +
@@ -279,6 +279,8 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
       '<div><label class="field-label" for="busy-to">TO</label><input class="input" type="date" id="busy-to" value="' + busyTo + '"></div>' +
       '<div><button class="button button-primary" data-action="busy-export" id="busy-export-btn">↓ Download for Busy</button></div></div>' +
       '<div style="padding:0 19px 19px"><p class="field-hint" id="busy-count">' + inRange.length + ' bill' + (inRange.length === 1 ? '' : 's') + ' in this range.</p><div id="busy-result"></div></div></section>' +
+      '<section class="panel" style="margin-top:16px" id="busy-single-panel"><div class="panel-head"><div><div class="panel-title">Single bill</div><div class="panel-caption">Type a bill no. (full, like RS/2026-27/0041, or just 41) and press Enter. Downloads one .xml: in Busy use Add Sale → Paste, or Import. Tip: Alt+B on an open bill does the same.</div></div></div>' +
+      '<div style="padding:19px;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end"><div><label class="field-label" for="busy-billno">BILL NO.</label><input class="input" id="busy-billno" autocomplete="off" placeholder="e.g. 41"></div><div><button class="button button-primary" data-action="busy-single" id="busy-single-btn">↓ Export this bill</button></div></div><div style="padding:0 19px 19px" id="busy-single-result"></div></section>' +
       '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Busy names</div><div class="panel-caption">Exactly as they are written in Busy.</div></div><button class="button button-light button-small" data-action="busy-save">Save settings</button></div>' +
       '<div style="padding:19px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">' +
       '<div><label class="field-label" for="busy-partyMode">PARTY</label><select class="input" id="busy-partyMode"><option value="customer"' + (cfg.partyMode === 'customer' ? ' selected' : '') + '>Bill\'s customer (account must exist in Busy)</option><option value="cash"' + (cfg.partyMode === 'cash' ? ' selected' : '') + '>Always the cash party</option></select></div>' +
@@ -326,6 +328,37 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
     if (res) res.innerHTML = '<p class="field-hint" style="color:inherit"><b>' + out.files.length + ' voucher' + (out.files.length === 1 ? '' : 's') + '</b> · ₹' + number(Math.round(total * 100) / 100) + ' total · ' + (out.files.length === 1 ? esc(out.files[0].name) : 'zip: unzip into an empty folder, then import that folder in Busy') + '</p>' + unmappedHtml + skippedHtml;
     toast('Busy file downloaded: ' + out.files.length + ' voucher' + (out.files.length === 1 ? '' : 's') + '.');
   }
+  function busyMessage(title, html){
+    let d=document.getElementById('busy-msg');
+    if(!d){d=document.createElement('dialog');d.id='busy-msg';d.className='modal modal-narrow';document.body.append(d);}
+    d.innerHTML='<div class="modal-head"><div><div class="eyebrow">EXPORT TO BUSY</div><h2>'+esc(title)+'</h2></div><button class="icon-button" data-action="close-dialog">\u2715</button></div><div class="modal-body">'+html+'</div><div class="modal-foot"><span></span><button class="button button-primary" type="button" data-action="close-dialog" id="busy-msg-ok">OK</button></div>';
+    d.showModal(); const ok=$('#busy-msg-ok'); if(ok)ok.focus();
+  }
+  // One bill → one .xml (never a zip). Same voucher format and settings as the Export to Busy page.
+  async function exportBill(b){
+    if(!b){toast('Bill not found.',true);return null;}
+    const out=singleBillExport(b, await busyConfig());
+    if(out.problem){
+      if(out.unpriced&&out.unpriced.length) busyMessage('Bill '+b.billNumber+' needs prices','<p>Busy needs a price on every line. These items have no price:</p><p id="busy-unpriced"><b>'+out.unpriced.map(esc).join(', ')+'</b></p><p class="field-hint">Open the bill, press Edit, type the prices, save, then export again.</p>');
+      else busyMessage('Bill '+b.billNumber+' cannot go to Busy','<p>'+esc(out.problem)+'</p>');
+      return null;
+    }
+    downloadBytes(latin1Bytes(out.file.xml), out.file.name, 'application/xml');
+    toast('Busy file downloaded: '+out.file.name);
+    return out.file;
+  }
+  async function exportOneBill(id){ const b=(await all('bills')).find(v=>v.id===id); return exportBill(b); }
+  async function exportBusySingle(){
+    const inp=$('#busy-billno'), firm=$('#busy-firm'), typed=inp?inp.value.trim():'';
+    if(!typed){toast('Type a bill number.',true);if(inp)inp.focus();return;}
+    if(firm)busyFirm=firm.value;
+    await saveBusy(true);
+    const b=findBillByNo(await all('bills'), typed, busyFirm);
+    const res=$('#busy-single-result');
+    if(!b){ if(res)res.innerHTML='<p class="field-hint">No bill "'+esc(typed)+'" in '+esc(biz(busyFirm).name)+'.</p>'; toast('No bill '+typed+' in '+biz(busyFirm).name+'.',true); return; }
+    const f=await exportBill(b);
+    if(res)res.innerHTML=f?'<p class="field-hint" style="color:inherit"><b>'+esc(b.billNumber)+'</b> · ₹'+number(Math.round(f.voucher.total*100)/100)+' · '+esc(f.name)+'</p>':'';
+  }
   async function render() {
     $('#page-crumb').textContent=names[page]; $$('.main-nav [data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page)); $('#bill-nav-count').textContent=String((await all('bills')).length); all('supplyorders').then(rows=>{const c=$('#supply-nav-count');if(c)c.textContent=String(rows.length);});
     if(page==='dashboard')return renderDashboard(); if(page==='bills')return renderBills(); if(page==='catalog')return renderCatalog(); if(page==='supply')return renderSupply(); if(page==='analytics')return renderAnalytics(); if(page==='backup')return renderBackup(); if(page==='busy')return renderBusy();
@@ -343,8 +376,8 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
        '<form id="bill-form" novalidate><input type="hidden" name="billId" value="'+(isSaved?esc(data.id):'')+'"><input type="hidden" name="soId" value="'+esc(data.supplyOrderId||'')+'"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><input type="hidden" id="bill-business" name="businessId" value="'+esc(data.businessId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(data.businessId===b.id?' active':'')+'" data-action="pick-business" data-id="'+b.id+'" '+(lockCore?'disabled':'')+'>'+esc(b.name)+'</button>').join('')+'</div></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(lockCore?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" autocomplete="off" name="customerName" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(lockFields?'readonly':'')+'></div>'+(editing?'<div class="full"><label class="field-label">BILL NO.</label><input id="bill-no" class="input" name="billNumber" value="'+esc(data.billNumber)+'" required></div>':'')+'</div>'+
        '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(lockFields?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table bill-grid"><div class="items-table-head"><div>PRODUCT</div><div>BRAND</div><div>PRICE <span style="font-weight:400">(optional)</span></div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div></div>'+
        (isSaved&&total>0?'<div class="modal-section total-line"><span>Amount total (priced lines)</span><b>₹'+number(Math.round(total*100)/100)+'</b></div>':'')+
-       '<div class="modal-section"><label class="field-label">GST % <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-gst" class="input" type="number" min="0" max="28" step="0.01" value="'+(data.gst==null?'':data.gst)+'" placeholder="e.g. 5" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#97a29b">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div>'+(isSaved&&data.supplyOrderId?'<div class="modal-section"><span class="field-label">SUPPLY ORDER</span> <button type="button" class="button button-light button-small" data-action="open-supply" data-id="'+esc(data.supplyOrderId)+'">'+esc(soName)+'</button></div>':'')+'<div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, note, or bill number. Date stays fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price on each line is optional. No GST. Keyboard: Enter goes to the next field; on the last line Enter adds one new line; Enter on an empty product line finishes items. Shift+Enter goes back, Ctrl+Enter saves, Ctrl+Delete removes a line. Press ? for all keys.')+'</div></div>'+
-       '<div class="modal-foot">'+(isSaved&&!editing?'<button class="button button-light" type="button" data-action="print-bill" data-id="'+esc(data.id)+'">⎙ Print</button>'+(can('bill')?'<button class="button button-light" type="button" data-action="return-bill" data-id="'+esc(data.id)+'">↩ Return</button>':''):'<span class="field-hint">'+(editing?'Date stays fixed · bill number editable':'Product · price (optional) · quantity · unit')+'</span>')+'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(editing?'<button class="button button-primary" type="submit">Save changes</button>':(!isSaved?'<button class="button button-primary" type="submit">Save record</button>':(can('bill')?'<button class="button button-primary" type="button" data-action="edit-bill" data-id="'+esc(data.id)+'">Edit</button>':'')))+(isSaved&&!editing&&can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete</button>':'')+'</div></div></form>';
+       '<div class="modal-section"><label class="field-label">GST % <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-gst" class="input" type="number" min="0" max="28" step="0.01" value="'+(data.gst==null?'':data.gst)+'" placeholder="e.g. 5" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#97a29b">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#97a29b">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div>'+(isSaved&&data.supplyOrderId?'<div class="modal-section"><span class="field-label">SUPPLY ORDER</span> <button type="button" class="button button-light button-small" data-action="open-supply" data-id="'+esc(data.supplyOrderId)+'">'+esc(soName)+'</button></div>':'')+'<div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, note, or bill number. Date stays fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price starts at 1 on each new line: type the real price over it. No GST. Keyboard: Enter goes to the next field; on the last line Enter adds one new line; Enter on an empty product line finishes items. Shift+Enter goes back, Ctrl+Enter saves, Ctrl+Delete removes a line. Press ? for all keys.')+'</div></div>'+
+       '<div class="modal-foot">'+(isSaved&&!editing?'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="button button-light" type="button" data-action="print-bill" data-id="'+esc(data.id)+'">⎙ Print</button>'+'<button class="button button-light" type="button" data-action="busy-one" data-id="'+esc(data.id)+'" title="Download this bill as one Busy .xml (Alt+B)">⇩ Export to Busy</button>'+(can('bill')?'<button class="button button-light" type="button" data-action="return-bill" data-id="'+esc(data.id)+'">↩ Return</button>':'')+'</div>':'<span class="field-hint">'+(editing?'Date stays fixed · bill number editable':'Product · price (optional) · quantity · unit')+'</span>')+'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(editing?'<button class="button button-primary" type="submit">Save changes</button>':(!isSaved?'<button class="button button-primary" type="submit">Save record</button>':(can('bill')?'<button class="button button-primary" type="button" data-action="edit-bill" data-id="'+esc(data.id)+'">Edit</button>':'')))+(isSaved&&!editing&&can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete</button>':'')+'</div></div></form>';
       renderPhotoArea(data.photo||'', !lockFields);
     }).catch(e=>{console.error(e);toast('Could not load your catalog.',true);});
   }
@@ -515,7 +548,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
         const ordered = linked.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
         const linkedRows = ordered.length ? ordered.map(b => {
           const s = soSummary(b);
-          return '<tr><td class="strong-cell">' + esc(b.billNumber) + '</td><td class="muted-cell">' + dateLabel(b.date) + '</td><td>' + esc(biz(b.businessId).prefix) + '</td><td>' + b.items.length + '</td><td>' + number(s.q) + '</td><td>' + (s.amount == null ? '—' : number(s.amount)) + '</td><td><button class="icon-button" data-action="view-bill" data-id="' + esc(b.id) + '" title="View record">↗</button></td></tr>';
+          return '<tr><td class="strong-cell">' + esc(b.billNumber) + '</td><td class="muted-cell">' + dateLabel(b.date) + '</td><td>' + esc(biz(b.businessId).prefix) + '</td><td>' + b.items.length + '</td><td>' + number(s.q) + '</td><td>' + (s.amount == null ? '—' : number(s.amount)) + '</td><td class="row-actions" style="white-space:nowrap"><button class="icon-button" data-action="view-bill" data-id="' + esc(b.id) + '" title="View record">↗</button><button class="icon-button" data-action="busy-one" data-id="' + esc(b.id) + '" tabindex="-1" title="Export this bill to Busy (.xml) · Alt+B on a selected row">⇩</button></td></tr>';
         }).join('') : '<tr><td colspan="7" class="muted-cell">No bills linked yet. Use "Link bills / edit".</td></tr>';
         body = '<div class="modal-body">' +
           '<div class="form-grid"><div><label class="field-label">CUSTOMER</label><div class="input">' + esc(data.customerName || '—') + '</div></div><div><label class="field-label">ORDER DATE</label><div class="input">' + dateLabel(data.date) + '</div></div><div class="full"><label class="field-label">NOTES</label><div class="input">' + esc(data.notes || '—') + '</div></div></div>' +
@@ -712,6 +745,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
     ['N','New bill (when no window is open)'],
     ['/','Search on Records or Catalog, then Down arrow + Enter opens a result'],
     ['Alt + 1 to 7','Overview, Records, Supply, Catalog, Analytics, Backup, Export to Busy'],
+    ['Alt + B','Export the open bill (or the selected bill on Records) to Busy as one .xml'],
     ['?','Show these shortcuts']
   ];
   function showKbdHelp(){
@@ -742,9 +776,10 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
   function saveButton(root){ return root?$$(SAVE_SEL,root).find(b=>visible(b)&&!b.closest('.sug-fixed')):null; }
   function focusEl(el){ if(!el)return; el.focus(); if(el.select&&el.tagName==='INPUT'&&/^(text|search|number|tel|email|password|)$/.test(el.type||'')&&el.value){try{el.select();}catch(_){}} }
   function markDanger(root){ $$(DANGER_SEL,root||document).forEach(b=>{ if(b.getAttribute('tabindex')!=='-1')b.setAttribute('tabindex','-1'); }); }
+  const DEFAULT_PRICE='1'; // new item lines start at price 1 (Busy needs a price on every line); saved lines keep what they had
   function itemRowHtml(i, lock, brv){
     i=i||{};
-    return '<div class="item-row"><input class="input" data-field="productName" autocomplete="off" value="'+esc(i.productName||'')+'" placeholder="Search product" required '+(lock?'readonly':'')+'><input class="input" data-field="brand" autocomplete="off" value="'+esc(brv==null?(i.brand||''):brv)+'" placeholder="brand" '+(lock?'readonly':'')+'><input class="input" type="number" min="0" step="any" data-field="price" value="'+esc(i.price==null?'':i.price)+'" placeholder="price" '+(lock?'readonly':'')+'><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity==null?'':i.quantity)+'" placeholder="0" required '+(lock?'readonly':'')+'><input class="input" data-field="unit" autocomplete="off" value="'+esc(i.unit||'')+'" placeholder="e.g. bag" required '+(lock?'readonly':'')+'>'+(lock?'':'<button class="icon-button remove-item" type="button" data-action="remove-item" tabindex="-1" title="Remove line (Ctrl+Delete)">×</button>')+'</div>';
+    return '<div class="item-row"><input class="input" data-field="productName" autocomplete="off" value="'+esc(i.productName||'')+'" placeholder="Search product" required '+(lock?'readonly':'')+'><input class="input" data-field="brand" autocomplete="off" value="'+esc(brv==null?(i.brand||''):brv)+'" placeholder="brand" '+(lock?'readonly':'')+'><input class="input" type="number" min="0" step="any" data-field="price" value="'+esc(i.price===undefined&&!lock?DEFAULT_PRICE:(i.price==null?'':i.price))+'" placeholder="price" '+(lock?'readonly':'')+'><input class="input" type="number" min="0.001" step="any" data-field="quantity" value="'+esc(i.quantity==null?'':i.quantity)+'" placeholder="0" required '+(lock?'readonly':'')+'><input class="input" data-field="unit" autocomplete="off" value="'+esc(i.unit||'')+'" placeholder="e.g. bag" required '+(lock?'readonly':'')+'>'+(lock?'':'<button class="icon-button remove-item" type="button" data-action="remove-item" tabindex="-1" title="Remove line (Ctrl+Delete)">×</button>')+'</div>';
   }
   function addItemRow(){
     const box=$('#bill-items'); if(!box)return null;
@@ -752,7 +787,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
     const row=box.lastElementChild; const inp=$('[data-field="productName"]',row); if(inp)inp.focus();
     return row;
   }
-  function rowIsBlank(row){ return $$('[data-field]',row).every(i=>String(i.value||'').trim()===''); }
+  function rowIsBlank(row){ return $$('[data-field]',row).every(i=>{const v=String(i.value||'').trim();return v===''||(i.dataset.field==='price'&&v===DEFAULT_PRICE);}); }
   function removeItemRow(row, ask){
     const box=$('#bill-items'); if(!box||!row)return;
     const rows=$$('.item-row',box);
@@ -837,6 +872,13 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
     if((ctrl&&!e.altKey&&e.key==='Delete')||(e.altKey&&!ctrl&&(e.key==='d'||e.key==='D'||e.code==='KeyD'))){
       e.preventDefault(); if(!e.repeat)kbdDelete(); return;
     }
+    // 3b. Alt+B — export the open bill (or the selected Records row) to Busy as one .xml
+    if(e.altKey&&!ctrl&&(e.code==='KeyB'||e.key==='b'||e.key==='B')){
+      const d=topDialog(); let btn=null;
+      if(d&&d.id==='bill-dialog')btn=$('[data-action="busy-one"]',d);
+      else if(!d&&t&&t.matches&&t.matches('[data-action="view-bill"],[data-action="busy-one"]'))btn=t.closest('tr')&&$('[data-action="busy-one"]',t.closest('tr'));
+      if(btn&&visible(btn)){ e.preventDefault(); if(!e.repeat)btn.click(); return; }
+    }
     // 4. Enter
     if(e.key==='Enter'&&!ctrl&&!e.altKey){
       if(t&&t.tagName==='TEXTAREA'&&!e.shiftKey)return;
@@ -863,6 +905,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
       }
       if(!root&&typing){
         if(t.id==='bill-search'||t.id==='catalog-search'){ e.preventDefault(); focusFirstResult(); return; }
+        if(t.id==='busy-billno'){ e.preventDefault(); if(!e.repeat){ const sb=$('#busy-single-btn'); if(sb)sb.click(); } return; }
         if(t.tagName==='INPUT'&&t.form)e.preventDefault();
       }
       return;
@@ -953,6 +996,8 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip } from './busy-expor
     if(x==='export-backup')backup().catch(()=>toast('Could not create backup.',true));
     if(x==='export-new-backup')backupIncremental('manual').catch(()=>toast('Could not create backup.',true));
     if(x==='quick-backup'){const d=a.closest('dialog');if(d&&d.open)d.close();backupIncremental('prompt').catch(()=>toast('Could not create backup.',true));}
+    if(x==='busy-one')exportOneBill(a.dataset.id).catch(err=>{console.error(err);toast('Could not make the Busy file.',true);});
+    if(x==='busy-single')exportBusySingle().catch(err=>{console.error(err);toast('Could not make the Busy file.',true);});
     if(x==='busy-export')exportBusy().catch(err=>{console.error(err);toast('Could not make the Busy file.',true);});
     if(x==='busy-save')saveBusy().catch(()=>toast('Could not save Busy settings.',true));
     if(x==='export-analytics')exportAnalytics().catch(()=>toast('Could not export this report.',true));
