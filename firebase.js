@@ -43,6 +43,11 @@ if (!configured) {
     write(name, item) {
       return storeSdk.setDoc(docFor(name, item.id), item);
     },
+    // Removes only the named fields of one record (used to clear old edit history); nothing else on the record changes.
+    dropFields(name, key, fields) {
+      if (!storeSdk.updateDoc || !storeSdk.deleteField) return Promise.resolve(false);
+      return storeSdk.updateDoc(docFor(name, key), Object.fromEntries(fields.map(field => [field, storeSdk.deleteField()]))).then(() => true);
+    },
     // No delete: records are soft-deleted (deleted:true) and Firestore rules deny every delete.
     listen(callback, onError) {
       return ['bills', 'counters', 'products', 'customers', 'supplyorders'].map(name =>
