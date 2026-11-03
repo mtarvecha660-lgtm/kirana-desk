@@ -96,6 +96,7 @@ async function main() {
     ok(await dialogOpen(page, 'bill-dialog'), 'N opens a new bill');
     eq(await active(page), '#bill-customer', 'cursor starts in Customer');
     eq(await rows(page), 1, 'new bill starts with 1 item line');
+    eq(await page.inputValue('#bill-items .item-row [data-field=price]'), '1', 'a new line starts with price 1');
     await typeEnter(page, 'Test Kumar Traders');
     eq(await active(page), 'field:productName:0', 'Enter on Customer goes to Product (not to "+ Add line")');
     eq(await rows(page), 1, 'no line created by Enter on Customer');
@@ -181,6 +182,7 @@ async function main() {
     eq(await count(page, 'bills'), bills0 + 1, 'Ctrl+Enter (pressed twice) saves exactly ONE bill');
     const saved = await page.evaluate(() => new Promise(res => { const r = indexedDB.open('kirana-desk'); r.onsuccess = () => { const q = r.result.transaction('bills').objectStore('bills').getAll(); q.onsuccess = () => res(q.result.find(b => b.customerName === 'Test Kumar Traders')); }; }));
     eq(saved && saved.items.length, 1, 'saved bill has the filled line only (blank trailing line ignored)');
+    eq(saved && saved.items[0].price, 40, 'price typed over the default 1 is saved as typed (40)');
     ok(await dialogOpen(page, 'bill-dialog'), 'saved bill opens in view');
     eq(await active(page), 'action:edit-bill', 'view opens with Edit focused');
     await press(page, 'Enter'); await W(page, 500);
@@ -200,6 +202,28 @@ async function main() {
     page.__confirm = true; await press(page, 'Escape'); await W(page, 200);
     ok(!(await dialogOpen(page, 'bill-dialog')), 'Esc + OK closes it');
     eq(await count(page, 'bills'), bills0 + 1, 'closing an unsaved bill saves nothing');
+    // default price 1: Enter straight through the price keeps 1 and the bill saves with it
+    await press(page, 'n'); await W(page, 400);
+    await typeEnter(page, 'Default Price Co');
+    await typeEnter(page, 'Plain Salt'); await W(page, 200);
+    if (await page.evaluate(() => !!document.querySelector('.sug-fixed'))) { await press(page, 'Escape'); await W(page, 150); }
+    eq(await active(page), 'field:brand:0', 'default-price bill: Product → Brand');
+    await typeEnter(page, '');
+    eq(await active(page), 'field:price:0', 'Brand → Price (shows 1)');
+    eq(await page.evaluate(() => document.activeElement.value), '1', 'price field holds 1');
+    await page.keyboard.press('Enter'); await W(page, 200);
+    eq(await active(page), 'field:quantity:0', 'Enter on the default price moves to Quantity');
+    await typeEnter(page, '3'); await page.keyboard.type('kg'); await W(page, 150);
+    await page.keyboard.press('Enter'); await W(page, 250);
+    eq(await rows(page), 2, 'Enter on Unit adds one line (default price does not break the Enter flow)');
+    eq(await page.inputValue('#bill-items .item-row:nth-child(2) [data-field=price]'), '1', 'the added line also starts at price 1');
+    await press(page, 'Enter'); await W(page, 150);
+    eq(await active(page), '#bill-gst', 'Enter on the new empty Product line still finishes items (price 1 alone = empty line)');
+    await page.keyboard.press('Control+Enter'); await W(page, 900);
+    const dp = await page.evaluate(() => new Promise(res => { const r = indexedDB.open('kirana-desk'); r.onsuccess = () => { const q = r.result.transaction('bills').objectStore('bills').getAll(); q.onsuccess = () => res(q.result.find(b => b.customerName === 'Default Price Co')); }; }));
+    eq(dp && dp.items.length, 1, 'default-price bill saved with 1 line (trailing price-1-only line ignored)');
+    eq(dp && dp.items[0].price, 1, 'saved price = 1');
+    await press(page, 'Escape'); await W(page, 200);
     eq(page.errors.length, 0, 'no console errors' + (page.errors.length ? ': ' + page.errors.join(' | ') : ''));
     await ctx.close();
   }
