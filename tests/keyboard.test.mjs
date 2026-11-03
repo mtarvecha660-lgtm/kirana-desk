@@ -80,7 +80,8 @@ async function main() {
   const W = (p, ms = 120) => p.waitForTimeout(ms);
   const active = p => p.evaluate(() => { const a = document.activeElement; if (!a) return ''; return a.id ? '#' + a.id : (a.dataset.field ? 'field:' + a.dataset.field + ':' + [...document.querySelectorAll('#bill-items .item-row')].indexOf(a.closest('.item-row')) : (a.dataset.action ? 'action:' + a.dataset.action : a.tagName + ':' + (a.textContent || '').trim().slice(0, 20))); });
   const rows = p => p.evaluate(() => document.querySelectorAll('#bill-items .item-row').length);
-  const count = (p, store) => p.evaluate(s => new Promise(res => { const r = indexedDB.open('kirana-desk'); r.onsuccess = () => { const db = r.result; if (!db.objectStoreNames.contains(s)) return res(-1); const q = db.transaction(s).objectStore(s).getAll(); q.onsuccess = () => res(q.result.length); }; r.onerror = () => res(-1); }), store);
+  // live records only: a deleted record stays in the database with deleted:true (Recycle bin)
+  const count = (p, store) => p.evaluate(s => new Promise(res => { const r = indexedDB.open('kirana-desk'); r.onsuccess = () => { const db = r.result; if (!db.objectStoreNames.contains(s)) return res(-1); const q = db.transaction(s).objectStore(s).getAll(); q.onsuccess = () => res(q.result.filter(x => !x.deleted).length); }; r.onerror = () => res(-1); }), store);
   const dialogOpen = (p, id) => p.evaluate(i => !!document.querySelector('#' + i + '[open]'), id);
   const press = async (p, k, n = 1) => { for (let i = 0; i < n; i++) { await p.keyboard.press(k); await W(p, 90); } };
   const typeEnter = async (p, text) => { if (text) await p.keyboard.type(text); await W(p, 140); await p.keyboard.press('Enter'); await W(p, 160); };
