@@ -146,7 +146,7 @@ export function fileNameFor(v) { return 'Sales-' + String(v.vchNo).replace(/[^A-
 export function buildBusyExport(bills, cfgIn) {
   const cfg = mergeConfig(cfgIn);
   const files = [], skipped = [], unmapped = new Set();
-  bills.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || (a.sequence || 0) - (b.sequence || 0)).forEach(b => {
+  bills.filter(b => b && !b.deleted).sort((a, b) => String(a.date).localeCompare(String(b.date)) || (a.sequence || 0) - (b.sequence || 0)).forEach(b => {
     const v = billToVoucher(b, cfg);
     if (v.problem) { skipped.push({ billNumber: b.billNumber, reason: v.problem }); return; }
     v.unmapped.forEach(n => unmapped.add(n));
@@ -158,7 +158,7 @@ export function buildBusyExport(bills, cfgIn) {
 // One saved bill → exactly one .xml (never a zip), for Busy's Add Sale > Paste or Import.
 // Returns { file: { name, xml, voucher } } or { problem, unpriced: [item names] }.
 export function singleBillExport(bill, cfgIn) {
-  if (!bill) return { problem: 'bill not found', unpriced: [] };
+  if (!bill || bill.deleted) return { problem: 'bill not found', unpriced: [] };
   const cfg = mergeConfig(cfgIn);
   const v = billToVoucher(bill, cfg);
   if (v.problem) return { problem: v.problem, unpriced: v.unpriced || [] };
@@ -169,7 +169,7 @@ export function singleBillExport(bill, cfgIn) {
 // Among several matches (different years) the newest wins.
 export function findBillByNo(bills, typed, firmId) {
   const q = String(typed || '').trim().toLowerCase(); if (!q) return null;
-  const pool = (bills || []).filter(b => !firmId || b.businessId === firmId);
+  const pool = (bills || []).filter(b => b && !b.deleted && (!firmId || b.businessId === firmId));
   const newest = list => list.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.sequence || 0) - (a.sequence || 0))[0] || null;
   const exact = pool.filter(b => String(b.billNumber || '').trim().toLowerCase() === q);
   if (exact.length) return newest(exact);
