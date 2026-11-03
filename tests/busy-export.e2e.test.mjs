@@ -102,6 +102,47 @@ async function main() {
   ok(/2 vouchers/.test(res) && /RS\/2026-27\/0043/.test(res) && /no price/.test(res), 'screen says 2 vouchers and names the skipped unpriced bill');
   const shot = path.join(ROOT, 'tests', 'out', 'busy-page.png'); await page.screenshot({ path: shot, fullPage: true });
 
+  console.log('\n3b. Single bill: Export page box');
+  await page.fill('#busy-billno', '41'); await page.waitForTimeout(100);
+  [dl] = await Promise.all([page.waitForEvent('download'), page.press('#busy-billno', 'Enter')]);
+  eq(dl.suggestedFilename(), 'Sales-RS-2026-27-0041.xml', 'bill no. "41" + Enter downloads one .xml (not a zip)');
+  const sx = fs.readFileSync(await dl.path()).toString('latin1');
+  eq(sx, xml, 'same XML as the range export of that bill');
+  ok(/41/.test(await page.textContent('#busy-single-result')), 'result line names the bill');
+  await page.fill('#busy-billno', '43'); await page.press('#busy-billno', 'Enter');
+  await page.waitForSelector('#busy-msg[open]');
+  ok((await page.textContent('#busy-unpriced')).includes('Atta'), 'unpriced bill 43 → message names "Atta"');
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+  ok(!(await page.$('#busy-msg[open]')), 'Esc closes the message');
+
+  console.log('\n3c. Single bill: Records list and bill view');
+  await page.keyboard.press('Alt+2'); await page.waitForSelector('[data-action="view-bill"]');
+  ok(await page.$('tr [data-action="busy-one"]') !== null, 'Records rows have an Export to Busy (⇩) button');
+  const rowBtn = page.locator('tr:has-text("RS/2026-27/0042") [data-action="busy-one"]');
+  [dl] = await Promise.all([page.waitForEvent('download'), rowBtn.click()]);
+  eq(dl.suggestedFilename(), 'Sales-RS-2026-27-0042.xml', 'row ⇩ downloads that bill as one .xml');
+  await page.locator('tr:has-text("RS/2026-27/0041") [data-action="view-bill"]').click();
+  await page.waitForSelector('#bill-dialog[open] [data-action="busy-one"]');
+  ok((await page.textContent('#bill-dialog [data-action="busy-one"]')).includes('Export to Busy'), 'bill view has an "Export to Busy" button');
+  await page.locator('#bill-dialog').focus();
+  [dl] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Alt+B')]);
+  eq(dl.suggestedFilename(), 'Sales-RS-2026-27-0041.xml', 'Alt+B in the bill view downloads it');
+  fs.mkdirSync(path.join(ROOT, 'tests', 'out'), { recursive: true });
+  await page.locator('#bill-dialog').screenshot({ path: path.join(ROOT, 'tests', 'out', 'single-export-button.png') });
+  [dl] = await Promise.all([page.waitForEvent('download'), page.click('#bill-dialog [data-action="busy-one"]')]);
+  fs.writeFileSync(path.join(ROOT, 'tests', 'out', 'single-' + dl.suggestedFilename()), fs.readFileSync(await dl.path()));
+  ok(true, 'button click downloads too');
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+  await page.locator('tr:has-text("RS/2026-27/0043") [data-action="view-bill"]').click(); await page.waitForSelector('#bill-dialog[open]');
+  eq(await page.inputValue('#bill-dialog [data-field=price]'), '', 'an existing bill with no price stays blank (no default 1 forced on saved lines)');
+  await page.click('#bill-dialog [data-action="busy-one"]'); await page.waitForSelector('#busy-msg[open]');
+  ok((await page.textContent('#busy-msg')).includes('Atta'), 'unpriced bill from the bill view → clear message naming the item');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+  // Alt+B on a selected Records row
+  await page.locator('tr:has-text("RS/2026-27/0042") [data-action="view-bill"]').focus();
+  [dl] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Alt+B')]);
+  eq(dl.suggestedFilename(), 'Sales-RS-2026-27-0042.xml', 'Alt+B on a selected Records row downloads that bill');
+
   console.log('\n4. Settings survive a reload');
   await page.reload(); await page.waitForSelector('#page-content .page-head'); await page.click('[data-page="busy"]'); await page.waitForSelector('#busy-export-btn');
   eq(await page.inputValue('[data-busy-item="haldi powder"] [data-busy="hsn"]'), '0910', 'item mapping saved');
