@@ -43,9 +43,7 @@ if (!configured) {
     write(name, item) {
       return storeSdk.setDoc(docFor(name, item.id), item);
     },
-    delete(name, key) {
-      return storeSdk.deleteDoc(docFor(name, key));
-    },
+    // No delete: records are soft-deleted (deleted:true) and Firestore rules deny every delete.
     listen(callback, onError) {
       return ['bills', 'counters', 'products', 'customers', 'supplyorders'].map(name =>
         storeSdk.onSnapshot(collectionFor(name), snapshot => {
