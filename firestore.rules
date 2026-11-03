@@ -1,10 +1,15 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // This Firebase project is dedicated to the family dispatch register.
-    // Create only the family accounts in Firebase Authentication.
+    // Only the two family accounts can open the shop records.
+    function isFamily() {
+      return request.auth != null
+        && request.auth.token.email in ['mtarvecha660@gmail.com', 'moksh7tarvecha@gmail.com'];
+    }
     match /workspaces/kiranaDesk/{collection}/{recordId} {
-      allow read, write: if request.auth != null;
+      allow read, create, update: if isFamily();
+      // Nothing is ever deleted: the app moves records to its Recycle bin (deleted:true) instead.
+      allow delete: if false;
     }
     match /{document=**} {
       allow read, write: if false;
