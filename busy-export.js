@@ -77,8 +77,8 @@ export function billToVoucher(bill, cfgIn) {
   const cfg = mergeConfig(cfgIn);
   const items = (bill.items || []).filter(i => String(i.productName || '').trim() && Number(i.quantity) > 0);
   if (!items.length) return { problem: 'no item lines' };
-  const unpriced = items.filter(i => !(Number(i.price) > 0)).map(i => i.productName);
-  if (unpriced.length) return { problem: 'no price on ' + unpriced.join(', ') };
+  const unpriced = items.filter(i => !(Number(i.price) > 0)).map(i => String(i.productName).trim());
+  if (unpriced.length) return { problem: 'no price on ' + unpriced.join(', '), unpriced };
   const custKey = key(bill.customerName);
   const party = cfg.partyMode === 'cash' || !custKey ? cfg.cashParty : (cfg.customers[custKey] || String(bill.customerName).trim());
   const billRate = Number(bill.gst) > 0 ? Number(bill.gst) : 0;
@@ -153,6 +153,28 @@ export function buildBusyExport(bills, cfgIn) {
     files.push({ name: fileNameFor(v), xml: voucherXml(v, cfg), voucher: v });
   });
   return { files, skipped, unmapped: Array.from(unmapped) };
+}
+
+// One saved bill → exactly one .xml (never a zip), for Busy's Add Sale > Paste or Import.
+// Returns { file: { name, xml, voucher } } or { problem, unpriced: [item names] }.
+export function singleBillExport(bill, cfgIn) {
+  if (!bill) return { problem: 'bill not found', unpriced: [] };
+  const cfg = mergeConfig(cfgIn);
+  const v = billToVoucher(bill, cfg);
+  if (v.problem) return { problem: v.problem, unpriced: v.unpriced || [] };
+  return { file: { name: fileNameFor(v), xml: voucherXml(v, cfg), voucher: v } };
+}
+
+// Find a bill by what a person types: the full bill no. ("RS/2026-27/0041") or just its number ("41").
+// Among several matches (different years) the newest wins.
+export function findBillByNo(bills, typed, firmId) {
+  const q = String(typed || '').trim().toLowerCase(); if (!q) return null;
+  const pool = (bills || []).filter(b => !firmId || b.businessId === firmId);
+  const newest = list => list.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.sequence || 0) - (a.sequence || 0))[0] || null;
+  const exact = pool.filter(b => String(b.billNumber || '').trim().toLowerCase() === q);
+  if (exact.length) return newest(exact);
+  if (/^\d+$/.test(q)) { const n = Number(q); const bySeq = pool.filter(b => Number(b.sequence) === n || Number((String(b.billNumber || '').match(/(\d+)\s*$/) || [])[1]) === n); if (bySeq.length) return newest(bySeq); }
+  return null;
 }
 
 // Minimal ZIP writer (stored, no compression) so many voucher files download as one.
