@@ -94,8 +94,10 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
   }
   const localAll = store => new Promise((resolve, reject) => { const r = db.transaction(store).objectStore(store).getAll(); r.onsuccess = () => resolve(r.result || []); r.onerror = () => reject(r.error); });
   const putLocal = (store, value) => new Promise((resolve, reject) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).put(value); tx.oncomplete = () => resolve(value); tx.onerror = () => reject(tx.error); });
-  const delLocal = (store, key) => new Promise((resolve, reject) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).delete(key); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
-  async function all(store) {
+  const getLocal = (store, key) => new Promise((resolve, reject) => { const r = db.transaction(store).objectStore(store).get(key); r.onsuccess = () => resolve(r.result || null); r.onerror = () => reject(r.error); });
+  const who = () => (window.KiranaCloud && window.KiranaCloud.user && window.KiranaCloud.user.email) || 'this computer';
+  /* Every record, including ones in the Recycle bin (deleted:true). Backups, numbering and the Recycle bin use this. */
+  async function allRaw(store) {
     if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user){
       try{
         const records=await window.KiranaCloud.list(store);
@@ -105,15 +107,23 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
     }
     return localAll(store);
   }
+  /* Live records only: anything in the Recycle bin is hidden from lists, totals, analytics and Busy export. */
+  async function all(store) { return (await allRaw(store)).filter(r => !r.deleted); }
   async function put(store, value) {
     value = Object.assign({}, value, { updatedAt: new Date().toISOString() });
-    await putLocal(store,value);scheduleAutoBackup();
+    await putLocal(store,value);scheduleAutoBackup();scheduleDaily();
     if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user)window.KiranaCloud.write(store,value).catch(error=>{console.warn('Cloud write is queued or unavailable.',error);$('#online-label').textContent='Sync pending';});
     return value;
   }
-  async function del(store, key) {
-    await delLocal(store,key);scheduleAutoBackup();
-    if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user)window.KiranaCloud.delete(store,key).catch(error=>{console.warn('Cloud delete is queued or unavailable.',error);$('#online-label').textContent='Sync pending';});
+  /* Soft delete: the record is never removed, only marked and moved to the Recycle bin (Backup & restore page). */
+  async function del(store, key, extra) {
+    const rec = await getLocal(store, key); if(!rec) return null;
+    return put(store, Object.assign({}, rec, extra || {}, { deleted:true, deletedAt:new Date().toISOString(), deletedBy:who() }));
+  }
+  async function undel(store, key) {
+    const rec = await getLocal(store, key); if(!rec) return null;
+    const r = Object.assign({}, rec, { deleted:false, restoredAt:new Date().toISOString(), restoredBy:who() }); delete r.deletedAt; delete r.deletedBy;
+    return put(store, r);
   }
   function makeBill(data) {
     if(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user){
@@ -127,10 +137,11 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
     }
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['counters', 'bills'], 'readwrite'), counters = tx.objectStore('counters');
-      const year = fy(data.date), counterId = data.businessId + ':' + year, req = counters.get(counterId);
+      const year = fy(data.date), counterId = data.businessId + ':' + year, req = counters.get(counterId), used = tx.objectStore('bills').getAll();
       let saved;
-      req.onsuccess = () => {
-        const seq = (req.result && req.result.lastNumber || 0) + 1, b = biz(data.businessId);
+      used.onsuccess = () => {
+        const maxUsed = (used.result || []).filter(x => x.businessId === data.businessId && x.financialYear === year).reduce((m, x) => Math.max(m, Number(x.sequence) || 0), 0);
+        const seq = Math.max(req.result && req.result.lastNumber || 0, maxUsed) + 1, b = biz(data.businessId);
         saved = Object.assign({}, data, { id:uid(), financialYear:year, sequence:seq, billNumber:b.prefix + '/' + year + '/' + String(seq).padStart(4, '0'), createdAt:new Date().toISOString() });
         counters.put({ id:counterId, businessId:data.businessId, financialYear:year, lastNumber:seq });
         tx.objectStore('bills').add(saved);
@@ -165,7 +176,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
     if (!items.length) return empty('No bills yet', 'Create your first dispatch bill. Each form gets its own number sequence for every financial year.', can('bill') ? '<button class="button button-primary" data-action="new-bill">＋ Create first bill</button>' : '');
     return '<div class="table-wrap"><table class="data-table"><thead><tr><th>BILL NUMBER</th>' + (showForm ? '<th>FORM</th>' : '') + '<th>CUSTOMER</th><th>DATE</th><th>ITEMS</th><th>QUANTITY</th><th></th></tr></thead><tbody>' + items.map(b => {
       const q = b.items.reduce((s, i) => s + Number(i.quantity || 0), 0);
-      return '<tr><td class="strong-cell">' + esc(b.billNumber) + '</td>' + (showForm ? '<td>' + chip(b.businessId) + '</td>' : '') + '<td>' + esc(b.customerName) + '</td><td class="muted-cell">' + dateLabel(b.date) + '</td><td>' + b.items.length + '</td><td>' + number(q) + '</td><td class="row-actions" style="white-space:nowrap"><button class="icon-button" data-action="view-bill" data-id="' + esc(b.id) + '" title="View record">↗</button><button class="icon-button" data-action="busy-one" data-id="' + esc(b.id) + '" tabindex="-1" title="Export this bill to Busy (.xml) · Alt+B on a selected row">⇩</button></td></tr>';
+      return '<tr><td class="strong-cell">' + esc(b.billNumber) + ((b.history || []).length ? ' <span class="tag red" title="Edited after saving: open the bill to see previous versions">edited</span>' : '') + '</td>' + (showForm ? '<td>' + chip(b.businessId) + '</td>' : '') + '<td>' + esc(b.customerName) + '</td><td class="muted-cell">' + dateLabel(b.date) + '</td><td>' + b.items.length + '</td><td>' + number(q) + '</td><td class="row-actions" style="white-space:nowrap"><button class="icon-button" data-action="view-bill" data-id="' + esc(b.id) + '" title="View record">↗</button><button class="icon-button" data-action="busy-one" data-id="' + esc(b.id) + '" tabindex="-1" title="Export this bill to Busy (.xml) · Alt+B on a selected row">⇩</button></td></tr>';
     }).join('') + '</tbody></table></div>';
   }
   async function renderDashboard() {
@@ -238,12 +249,69 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
     const auto = backupDir && autoEnabled;
     return '<section class="panel" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Automatic backup on this computer</div><div class="panel-caption">A fresh copy is saved here after every change, even if the shared backend fails.</div></div></div><div style="padding:19px">'+(backupDir?'<span class="tag gray">Folder: '+esc(backupDir.name)+'</span> ':'')+'<button class="button button-primary" data-action="set-backup-folder">'+(backupDir?'Change folder':'Choose auto backup folder')+'</button> '+(backupDir&&!autoEnabled?'<button class="button button-light" data-action="reallow-backup">Allow access again</button>':'')+'<p class="field-hint" style="line-height:1.6;margin-top:10px">'+(auto?'Automatic backup is on. Every new batch of records becomes its own file. Earlier files are never rewritten.':'Choose the folder once. Chrome or Edge will ask for permission, then save every new batch of records there.')+'</p></div></section>';
   }
+
+  /* ---------- Edit history (anti-tamper): every saved edit keeps the version before it ---------- */
+  function billSnapshot(b){ const s=JSON.parse(JSON.stringify(b)); delete s.history; delete s.photo; s.hadPhoto=!!b.photo; s.photoSig=b.photo?String(b.photo.length)+':'+String(b.photo).slice(-24):''; return s; }
+  function billChanged(prev,now,photo){
+    const pick=x=>JSON.stringify([x.customerName||'',x.notes||'',x.gst==null?null:Number(x.gst),x.billNumber||'',(x.items||[]).map(i=>[i.productName||'',i.brand||'',i.price==null||i.price===''?null:Number(i.price),Number(i.quantity)||0,i.unit||''])]);
+    const sig=photo?String(photo.length)+':'+String(photo).slice(-24):'';
+    return pick(prev)!==pick(now)||sig!==(prev.photoSig||'');
+  }
+  function dtLabel(iso){ try{ return new Date(iso).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return String(iso||''); } }
+  function histDlg(){ let d=$('#history-dialog'); if(!d){ d=document.createElement('dialog'); d.id='history-dialog'; d.className='modal'; document.body.append(d); } return d; }
+  function versionHtml(v,title){
+    const rows=(v.items||[]).map(i=>'<tr><td class="strong-cell">'+esc(i.productName)+'</td><td>'+esc(i.brand||'')+'</td><td>'+(i.price==null||i.price===''?'':'₹'+number(i.price))+'</td><td>'+number(i.quantity)+'</td><td>'+esc(i.unit||'')+'</td></tr>').join('');
+    return '<section class="panel" style="margin-bottom:12px"><div class="panel-head"><div><div class="panel-title">'+title+'</div><div class="panel-caption">Bill no. '+esc(v.billNumber)+' · '+esc(v.customerName)+(v.gst!=null&&v.gst!==''?' · GST '+esc(v.gst)+'%':'')+(v.notes?' · Note: '+esc(v.notes):'')+((v.hadPhoto||v.photo)?' · had a photo':'')+'</div></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>PRODUCT</th><th>BRAND</th><th>PRICE</th><th>QUANTITY</th><th>UNIT</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+  }
+  function historyDialog(b){
+    const h=(b.history||[]).slice().reverse();
+    histDlg().innerHTML='<div class="modal-head"><div><div class="eyebrow">EDIT HISTORY</div><h2>Previous versions · '+esc(b.billNumber)+'</h2><p>'+esc(biz(b.businessId).name)+' · edited '+h.length+(h.length===1?' time':' times')+'. Older versions cannot be changed.</p></div><button class="icon-button" data-action="close-dialog">✕</button></div><div class="modal-body">'+
+      versionHtml(b,'Current version'+(b.editedAt?' · saved '+esc(dtLabel(b.editedAt))+' by '+esc(b.editedBy||''):''))+
+      h.map((e,n)=>versionHtml(e.prev||{},'Before edit '+(h.length-n)+' · replaced '+esc(dtLabel(e.editedAt))+' by '+esc(e.editedBy||''))).join('')+
+      '</div><div class="modal-foot"><span></span><button class="button button-light" type="button" data-action="close-dialog">Close</button></div>';
+    histDlg().showModal();
+  }
+  /* ---------- Recycle bin ---------- */
+  async function recycleItems(){
+    const r=await Promise.all(['bills','products','customers','supplyorders'].map(s=>allRaw(s))), out=[];
+    r[0].filter(b=>b.deleted).forEach(b=>out.push({kind:'bills',id:b.id,type:'Bill',name:b.billNumber,bizId:b.businessId,detail:esc(b.customerName)+' · '+dateLabel(b.date)+' · '+(b.items||[]).length+((b.items||[]).length===1?' item':' items'),at:b.deletedAt,by:b.deletedBy}));
+    r[0].forEach(b=>(b.deletedReturns||[]).forEach(x=>out.push({kind:'return',id:b.id,rid:x.id,type:'Return',name:b.billNumber,bizId:b.businessId,detail:dateLabel(x.date)+' · '+(x.items||[]).map(i=>esc(i.productName)+' '+i.qty).join(', ')+(b.deleted?' (bill is in the bin too)':''),at:x.deletedAt,by:x.deletedBy})));
+    r[1].filter(x=>x.deleted).forEach(x=>out.push({kind:'products',id:x.id,type:'Product',name:x.name,bizId:x.businessId,detail:esc([x.unit,x.brand].filter(Boolean).join(' · ')),at:x.deletedAt,by:x.deletedBy}));
+    r[2].filter(x=>x.deleted).forEach(x=>out.push({kind:'customers',id:x.id,type:'Customer',name:x.name,bizId:x.businessId,detail:esc(x.note||''),at:x.deletedAt,by:x.deletedBy}));
+    r[3].filter(x=>x.deleted).forEach(x=>out.push({kind:'supplyorders',id:x.id,type:'Supply order',name:x.ref||'Supply order',bizId:x.businessId,detail:x.date?dateLabel(x.date):'',at:x.deletedAt,by:x.deletedBy}));
+    return out.sort((a,b)=>String(b.at||'').localeCompare(String(a.at||'')));
+  }
+  function recycleBinPanel(items){
+    const canRestore=can('delete')||can('bill');
+    const body=items.length?'<div class="table-wrap"><table class="data-table" id="recycle-table"><thead><tr><th>TYPE</th><th>BILL NO. / NAME</th><th>FORM</th><th>DETAILS</th><th>DELETED</th><th>BY</th><th></th></tr></thead><tbody>'+items.map(it=>'<tr data-kind="'+it.kind+'" data-id="'+esc(it.id)+'"><td><span class="tag '+(it.kind==='bills'?'red':'gray')+'">'+it.type+'</span></td><td class="strong-cell">'+esc(it.name)+'</td><td>'+(it.bizId?esc(biz(it.bizId).prefix):'')+'</td><td class="muted-cell">'+it.detail+'</td><td class="muted-cell">'+esc(it.at?dtLabel(it.at):'')+'</td><td class="muted-cell">'+esc(it.by||'')+'</td><td class="row-actions" style="white-space:nowrap">'+(it.kind==='bills'?'<button class="icon-button" data-action="view-deleted-bill" data-id="'+esc(it.id)+'" title="View this bill">↗</button> ':'')+(canRestore?'<button class="button button-light button-small" data-action="restore-deleted" data-kind="'+it.kind+'" data-id="'+esc(it.id)+'"'+(it.rid?' data-rid="'+esc(it.rid)+'"':'')+'>↺ Restore</button>':'')+'</td></tr>').join('')+'</tbody></table></div>'
+      :'<div style="padding:19px"><p class="field-hint" style="margin:0">Nothing deleted. A deleted bill, product, customer, return or supply order comes here and can be restored.</p></div>';
+    return '<section class="panel" id="recycle-bin" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title">Recycle bin</div><div class="panel-caption">Deleted records are kept here, never erased. Restore puts a record back as it was. A deleted bill keeps its number, so the number is never given to a new bill.</div></div><span class="tag gray">'+items.length+(items.length===1?' item':' items')+'</span></div>'+body+'</section>';
+  }
+  async function restoreDeleted(kind,id,rid){
+    if(kind==='return'){
+      const b=await getLocal('bills',id); if(!b)return; const x=(b.deletedReturns||[]).find(r=>r.id===rid); if(!x)return;
+      const back=Object.assign({},x); delete back.deletedAt; delete back.deletedBy;
+      b.deletedReturns=(b.deletedReturns||[]).filter(r=>r.id!==rid); b.returns=(b.returns||[]).concat([back]); await put('bills',b);
+      toast('Return entry restored on '+b.billNumber+'.'); render(); return;
+    }
+    const rec=await undel(kind,id); if(!rec)return;
+    if(kind==='supplyorders'&&Array.isArray(rec.unlinkedBills)){ for(const bid of rec.unlinkedBills){ const b=await getLocal('bills',bid); if(b&&!b.supplyOrderId){ b.supplyOrderId=rec.id; await put('bills',b); } } }
+    if(kind==='bills'){ const clash=(await all('bills')).some(b=>b.id!==rec.id&&b.businessId===rec.businessId&&b.billNumber===rec.billNumber); toast(rec.billNumber+' restored.'+(clash?' Another bill has the same number, check it.':''),clash); }
+    else toast((rec.name||rec.ref||'Record')+' restored.');
+    render();
+  }
+  function lastBackupLine(){
+    const last=localStorage.getItem('kiranaDeskLastBackup'), days=last?(Date.now()-new Date(last).getTime())/86400000:Infinity, off=!!localStorage.getItem(DAILY_OFF), where=localStorage.getItem('kiranaDeskDailyBackupWhere');
+    const dest=backupDir&&autoEnabled?'your backup folder ('+esc(backupDir.name)+')':'Downloads';
+    const warn=!last?'<span class="tag red" id="backup-warning">⚠ No backup yet</span>':(days>=3?'<span class="tag red" id="backup-warning">⚠ No backup in '+Math.floor(days)+' days</span>':'<span class="tag">✓ Backed up</span>');
+    return '<section class="panel" id="backup-status" style="margin-top:16px"><div class="panel-head"><div><div class="panel-title" id="last-backup-line">Last backup: '+(last?esc(dtLabel(last)):'never')+'</div><div class="panel-caption">'+(off?'Daily automatic backup is off on this device.':'Daily automatic backup is on: once a day, the first time the app opens, a full copy (kirana-backup-'+today()+'.json, Recycle bin included) is saved to '+dest+'. Today: '+(localStorage.getItem(DAILY_KEY)===today()?'done'+(where==='folder'?' (folder)':where?' (Downloads)':''):'not yet')+'.')+'</div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">'+warn+'<button class="button button-light button-small" data-action="daily-backup-now">↓ Back up now</button><button class="button button-light button-small" data-action="toggle-daily-backup">'+(off?'Turn daily backup on':'Turn off on this device')+'</button></div></div></section>';
+  }
   async function renderBackup() {
-    const res=await Promise.all([all('bills'),all('products'),all('customers')]), last=localStorage.getItem('kiranaDeskLastBackup');
+    const res=await Promise.all([all('bills'),all('products'),all('customers')]), last=localStorage.getItem('kiranaDeskLastBackup'), binItems=await recycleItems();
     $('#page-content').innerHTML=head('DATA SAFETY','Backup & restore','Create a portable copy of the records on this computer.')+
-      '<div class="notice"><strong>How your data is saved:</strong> your bills, customers, and products are stored in this browser on this computer. They work offline. Export backups to protect against device loss or cleared browser data.</div>'+
+      '<div class="notice"><strong>How your data is saved:</strong> your bills, customers, and products are stored in this browser on this computer. They work offline. Export backups to protect against device loss or cleared browser data.</div>'+lastBackupLine()+
       '<section class="stats-grid" style="margin-top:16px">'+stat('Bills',res[0].length,'On this computer','▤')+stat('Products',res[1].length,'On this computer','◫')+stat('Customers',res[2].length,'On this computer','♙')+stat('Last backup',last?dateLabel(last.slice(0,10)):'Not yet',last?new Date(last).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'Export a copy now','↥')+'</section>'+
-      '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Create a backup</div><div class="panel-caption">All forms, lists, bills, and bill counters in one file.</div></div></div><div style="padding:19px"><button class="button button-primary" data-action="export-new-backup">↓ Download new records only</button><button class="button button-light" data-action="export-backup" style="margin-left:8px">Full copy</button><p class="field-hint" style="line-height:1.6">New records only saves just what is not in any earlier backup file, and the file name carries the time, so an earlier file is never rewritten. Full copy saves everything in one file.</p></div></section><section class="panel"><div class="panel-head"><div><div class="panel-title">Restore a backup</div><div class="panel-caption">Replace local records with a saved backup.</div></div></div><div style="padding:19px"><label class="button button-light" for="backup-file">Choose backup file</label><input id="backup-file" type="file" accept="application/json,.json" hidden><p class="field-hint" style="line-height:1.6">Restore replaces current local data. Export it first if you want to keep a copy.</p></div></section></section>' + autoBackupPanel() + '</div>'+
+      '<div class="split-grid"><section class="panel"><div class="panel-head"><div><div class="panel-title">Create a backup</div><div class="panel-caption">All forms, lists, bills, and bill counters in one file.</div></div></div><div style="padding:19px"><button class="button button-primary" data-action="export-new-backup">↓ Download new records only</button><button class="button button-light" data-action="export-backup" style="margin-left:8px">Full copy</button><p class="field-hint" style="line-height:1.6">New records only saves just what is not in any earlier backup file, and the file name carries the time, so an earlier file is never rewritten. Full copy saves everything in one file.</p></div></section><section class="panel"><div class="panel-head"><div><div class="panel-title">Restore a backup</div><div class="panel-caption">Replace local records with a saved backup.</div></div></div><div style="padding:19px"><label class="button button-light" for="backup-file">Choose backup file</label><input id="backup-file" type="file" accept="application/json,.json" hidden><p class="field-hint" style="line-height:1.6">Restore replaces current local data. Export it first if you want to keep a copy.</p></div></section></section>' + autoBackupPanel() + '</div>'+recycleBinPanel(binItems)+
       '<div class="backup-steps"><div class="backup-step"><span class="step-number">1</span><b>Export after billing</b><p>Download a fresh copy after each work session.</p></div><div class="backup-step"><span class="step-number">2</span><b>Keep another copy</b><p>Move the file to a separate drive or your brother’s computer.</p></div><div class="backup-step"><span class="step-number">3</span><b>Restore when needed</b><p>Choose the file on the computer where you want the records.</p></div></div>';
   }
 
@@ -368,7 +436,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
     Promise.all([all('products'),all('customers'),all('supplyorders')]).then(res=>{
       const soName=data.supplyOrderId?(((res[2]||[]).find(o=>o.id===data.supplyOrderId)||{}).ref||'Supply order'):'';
       const products=res[0].filter(x=>x.businessId===data.businessId), customers=res[1].filter(x=>x.businessId===data.businessId);const brandMap={};res[0].forEach(p=>{brandMap[String(p.name||'').trim().toLowerCase()]=p.brand||'';});
-      const isSaved=!!data.billNumber, editing=isSaved&&!!editMode&&can('bill');
+      const inBin=!!data.deleted, isSaved=!!data.billNumber, editing=isSaved&&!!editMode&&can('bill')&&!inBin;
       const lockCore=isSaved, lockFields=isSaved&&!editing;
       const rows=data.items.map(i=>{const brv=i.brand!=null&&i.brand!==''?i.brand:(brandMap[String(i.productName||'').trim().toLowerCase()]||'');return itemRowHtml(i,lockFields,brv);}).join('');
       const total=data.items.reduce((s,i)=>s+(Number(i.price)>0?Number(i.price)*Number(i.quantity||0):0),0);
@@ -376,8 +444,8 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
        '<form id="bill-form" novalidate><input type="hidden" name="billId" value="'+(isSaved?esc(data.id):'')+'"><input type="hidden" name="soId" value="'+esc(data.supplyOrderId||'')+'"><div class="modal-body"><div class="form-grid"><div><label class="field-label">FORM</label><input type="hidden" id="bill-business" name="businessId" value="'+esc(data.businessId)+'"><div class="chip-row">'+BIZ.map(b=>'<button type="button" class="pick-chip'+(data.businessId===b.id?' active':'')+'" data-action="pick-business" data-id="'+b.id+'" '+(lockCore?'disabled':'')+'>'+esc(b.name)+'</button>').join('')+'</div></div><div><label class="field-label">BILL DATE</label><input id="bill-date" name="date" class="input" type="date" value="'+esc(data.date)+'" required '+(lockCore?'disabled':'')+'></div><div class="full"><label class="field-label">CUSTOMER / RECEIVER</label><input id="bill-customer" class="input" autocomplete="off" name="customerName" placeholder="Search or enter customer" value="'+esc(data.customerName)+'" required '+(lockFields?'readonly':'')+'></div>'+(editing?'<div class="full"><label class="field-label">BILL NO.</label><input id="bill-no" class="input" name="billNumber" value="'+esc(data.billNumber)+'" required></div>':'')+'</div>'+
        '<div class="items-toolbar"><strong>Products being dispatched</strong>'+(lockFields?'':'<button class="button button-light button-small" type="button" data-action="add-item">＋ Add line</button>')+'</div><div class="items-table bill-grid"><div class="items-table-head"><div>PRODUCT</div><div>BRAND</div><div>PRICE <span style="font-weight:400">(optional)</span></div><div>QUANTITY</div><div>UNIT</div><div></div></div><div id="bill-items">'+rows+'</div></div>'+
        (isSaved&&total>0?'<div class="modal-section total-line"><span>Amount total (priced lines)</span><b>₹'+number(Math.round(total*100)/100)+'</b></div>':'')+
-       '<div class="modal-section"><label class="field-label">GST % <span style="font-weight:400;color:#9ca3af">(optional)</span></label><input id="bill-gst" class="input" type="number" min="0" max="28" step="0.01" value="'+(data.gst==null?'':data.gst)+'" placeholder="e.g. 5" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#9ca3af">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#9ca3af">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div>'+(isSaved&&data.supplyOrderId?'<div class="modal-section"><span class="field-label">SUPPLY ORDER</span> <button type="button" class="button button-light button-small" data-action="open-supply" data-id="'+esc(data.supplyOrderId)+'">'+esc(soName)+'</button></div>':'')+'<div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, note, or bill number. Date stays fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price starts at 1 on each new line: type the real price over it. No GST. Keyboard: Enter goes to the next field; on the last line Enter adds one new line; Enter on an empty product line finishes items. Shift+Enter goes back, Ctrl+Enter saves, Ctrl+Delete removes a line. Press ? for all keys.')+'</div></div>'+
-       '<div class="modal-foot">'+(isSaved&&!editing?'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="button button-light" type="button" data-action="print-bill" data-id="'+esc(data.id)+'">⎙ Print</button>'+'<button class="button button-light" type="button" data-action="busy-one" data-id="'+esc(data.id)+'" title="Download this bill as one Busy .xml (Alt+B)">⇩ Export to Busy</button>'+(can('bill')?'<button class="button button-light" type="button" data-action="return-bill" data-id="'+esc(data.id)+'">↩ Return</button>':'')+'</div>':'<span class="field-hint">'+(editing?'Date stays fixed · bill number editable':'Product · price (optional) · quantity · unit')+'</span>')+'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(editing?'<button class="button button-primary" type="submit">Save changes</button>':(!isSaved?'<button class="button button-primary" type="submit">Save record</button>':(can('bill')?'<button class="button button-primary" type="button" data-action="edit-bill" data-id="'+esc(data.id)+'">Edit</button>':'')))+(isSaved&&!editing&&can('delete')?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete</button>':'')+'</div></div></form>';
+       '<div class="modal-section"><label class="field-label">GST % <span style="font-weight:400;color:#9ca3af">(optional)</span></label><input id="bill-gst" class="input" type="number" min="0" max="28" step="0.01" value="'+(data.gst==null?'':data.gst)+'" placeholder="e.g. 5" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">NOTE <span style="font-weight:400;color:#9ca3af">(optional)</span></label><input id="bill-notes" class="input" value="'+esc(data.notes||'')+'" placeholder="Delivery or dispatch note" '+(lockFields?'readonly':'')+'></div><div class="modal-section"><label class="field-label">BILL PHOTO <span style="font-weight:400;color:#9ca3af">(optional)</span></label><div id="bill-photo-area" data-editable="'+(lockFields?'no':'yes')+'" data-bill-id="'+(isSaved?esc(data.id):'')+'"></div><input type="file" id="bill-photo-input" accept="image/*" hidden><input type="hidden" id="bill-photo-value" value="'+(data.photo||'')+'"></div>'+(isSaved&&!editing&&(inBin||(data.history||[]).length)?'<div class="modal-section total-line" id="bill-safety-line"><span>'+(inBin?'<span class="tag red">In Recycle bin</span> Deleted '+esc(dtLabel(data.deletedAt))+' by '+esc(data.deletedBy||'')+'. Restore it from Backup & restore.':'')+((data.history||[]).length?(inBin?'<br>':'')+'<span class="tag red">Edited</span> '+data.history.length+(data.history.length===1?' time':' times')+' · last '+esc(dtLabel(data.editedAt||data.history[data.history.length-1].editedAt))+' by '+esc(data.editedBy||data.history[data.history.length-1].editedBy||''):'')+'</span>'+((data.history||[]).length?'<button type="button" class="button button-light button-small" data-action="bill-history" data-id="'+esc(data.id)+'">View previous versions</button>':'')+'</div>':'')+(isSaved&&data.supplyOrderId?'<div class="modal-section"><span class="field-label">SUPPLY ORDER</span> <button type="button" class="button button-light button-small" data-action="open-supply" data-id="'+esc(data.supplyOrderId)+'">'+esc(soName)+'</button></div>':'')+'<div class="modal-section helper-box">'+(isSaved?(editing?'Update the customer, items, note, or bill number. Date stays fixed.':'Saved dispatch record. Price is optional on each line.'):'Bill number is assigned on save. Price starts at 1 on each new line: type the real price over it. No GST. Keyboard: Enter goes to the next field; on the last line Enter adds one new line; Enter on an empty product line finishes items. Shift+Enter goes back, Ctrl+Enter saves, Ctrl+Delete removes a line. Press ? for all keys.')+'</div></div>'+
+       '<div class="modal-foot">'+(isSaved&&!editing?'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="button button-light" type="button" data-action="print-bill" data-id="'+esc(data.id)+'">⎙ Print</button>'+'<button class="button button-light" type="button" data-action="busy-one" data-id="'+esc(data.id)+'" title="Download this bill as one Busy .xml (Alt+B)">⇩ Export to Busy</button>'+(can('bill')&&!inBin?'<button class="button button-light" type="button" data-action="return-bill" data-id="'+esc(data.id)+'">↩ Return</button>':'')+'</div>':'<span class="field-hint">'+(editing?'Date stays fixed · bill number editable':'Product · price (optional) · quantity · unit')+'</span>')+'<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="button button-light" type="button" data-action="close-dialog">Close</button>'+(editing?'<button class="button button-primary" type="submit">Save changes</button>':(!isSaved?'<button class="button button-primary" type="submit">Save record</button>':(can('bill')&&!inBin?'<button class="button button-primary" type="button" data-action="edit-bill" data-id="'+esc(data.id)+'">Edit</button>':'')))+(isSaved&&!editing&&can('delete')&&!inBin?'<button class="button button-danger" type="button" data-action="delete-bill" data-id="'+esc(data.id)+'">Delete</button>':'')+'</div></div></form>';
       renderPhotoArea(data.photo||'', !lockFields);
     }).catch(e=>{console.error(e);toast('Could not load your catalog.',true);});
   }
@@ -391,7 +459,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
   function stampOf(r){ return String(r.updatedAt||r.createdAt||''); }
   async function unbackedCounts(){
     const stores=['bills','counters','products','customers','supplyorders'], m=backupManifest();
-    const sets=await Promise.all(stores.map(s=>all(s)));
+    const sets=await Promise.all(stores.map(s=>allRaw(s)));
     const counts={}; let total=0;
     stores.forEach((s,i)=>{ const got=m[s]||{}; counts[s]=sets[i].filter(r=>got[String(r.id)]!==stampOf(r)); total+=counts[s].length; });
     return { counts:counts, total:total };
@@ -399,7 +467,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
   async function buildIncremental(reason){
     const c=await unbackedCounts();
     if(!c.total) return null;
-    const counters=c.counts.bills.length?await all('counters'):[];
+    const counters=c.counts.bills.length?await allRaw('counters'):[];
     const data={app:'Kirana Desk',schemaVersion:1,exportedAt:new Date().toISOString(),incremental:true,reason:reason||'manual',bills:c.counts.bills,counters:counters,products:c.counts.products,customers:c.counts.customers,supplyorders:c.counts.supplyorders};
     return { data:data, marks:{ bills:c.counts.bills, counters:counters, products:c.counts.products, customers:c.counts.customers, supplyorders:c.counts.supplyorders } };
   }
@@ -428,10 +496,44 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
     bkDlg().innerHTML='<div class="modal-head"><div><div class="eyebrow">DATA SAFETY</div><h2>Backup new records</h2><p>'+line+' on this computer are not in any backup file yet.</p></div><button class="icon-button" data-action="close-dialog">\u2715</button></div><div class="modal-body"><p style="line-height:1.6">The download carries only records not backed up before, and the file name includes the time, so an earlier backup file is never rewritten.</p></div><div class="modal-foot"><span></span><div style="display:flex;gap:8px"><button class="button button-light" type="button" data-action="close-dialog">Later</button><button class="button button-primary" type="button" data-action="quick-backup">\u2193 Backup now</button></div></div>';
     bkDlg().showModal();
   }
+  const BACKUP_STORES=['bills','counters','products','customers','supplyorders'];
+  /* Full copy of everything, Recycle bin and edit history included. */
+  async function fullBackupData(reason){
+    const r=await Promise.all(BACKUP_STORES.map(s=>allRaw(s)));
+    return {app:'Kirana Desk',schemaVersion:1,exportedAt:new Date().toISOString(),reason:reason||'manual',bills:r[0],counters:r[1],products:r[2],customers:r[3],supplyorders:r[4]};
+  }
+  function downloadJson(data,name){ const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})), a=document.createElement('a'); a.href=url; a.download=name; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),4000); }
+  const marksOf=data=>({ bills:data.bills, counters:data.counters, products:data.products, customers:data.customers, supplyorders:data.supplyorders });
+  /* ---------- Automatic daily backup: once per day, first open of the day (and after changes if the day rolled over) ---------- */
+  const DAILY_KEY='kiranaDeskDailyBackupDay', DAILY_OFF='kiranaDeskDailyBackupOff';
+  let dailyRunning=false, dailyTimer=null;
+  function dailyDue(){ return !localStorage.getItem(DAILY_OFF) && localStorage.getItem(DAILY_KEY)!==today(); }
+  function scheduleDaily(){ clearTimeout(dailyTimer); dailyTimer=setTimeout(()=>dailyBackup().catch(console.warn),5000); }
+  async function dailyBackup(force){
+    if(!db||dailyRunning) return false;
+    if(!force&&!dailyDue()) return false;
+    if(window.KiranaCloud&&window.KiranaCloud.configured&&!window.KiranaCloud.user) return false;
+    const day=today(), name='kirana-backup-'+day+'.json';
+    dailyRunning=true; const before=localStorage.getItem(DAILY_KEY); localStorage.setItem(DAILY_KEY,day);
+    try{
+      const data=await fullBackupData(force?'manual-daily':'daily'); let where='downloads';
+      if(backupDir&&autoEnabled){
+        try{ if(await backupDir.queryPermission({mode:'readwrite'})==='granted'){ const fh=await backupDir.getFileHandle(name,{create:true}); const w=await fh.createWritable(); await w.write(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})); await w.close(); where='folder'; } }
+        catch(e){ console.warn('Daily backup to folder failed; downloading instead.',e); }
+      }
+      if(where==='downloads') downloadJson(data,name);
+      localStorage.setItem('kiranaDeskDailyBackupWhere',where); localStorage.setItem('kiranaDeskDailyBackupAt',new Date().toISOString());
+      applyBackupMarks(marksOf(data));
+      toast('Daily backup saved'+(where==='folder'?' in your backup folder':' to Downloads')+': '+name);
+      if(page==='backup') render();
+      return true;
+    }catch(e){ if(before==null)localStorage.removeItem(DAILY_KEY);else localStorage.setItem(DAILY_KEY,before); console.warn('Daily backup failed this time.',e); return false; }
+    finally{ dailyRunning=false; }
+  }
   async function backup() {
-    const r=await Promise.all([all('bills'),all('counters'),all('products'),all('customers'),all('supplyorders')]), data={app:'Kirana Desk',schemaVersion:1,exportedAt:new Date().toISOString(),bills:r[0],counters:r[1],products:r[2],customers:r[3],supplyorders:r[4]};
-    const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})), a=document.createElement('a'); a.href=url; a.download='kirana-desk-backup-'+today()+'-'+backupStamp()+'.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
-    applyBackupMarks({ bills:r[0], counters:r[1], products:r[2], customers:r[3], supplyorders:r[4] });
+    const data=await fullBackupData('manual');
+    downloadJson(data,'kirana-desk-backup-'+today()+'-'+backupStamp()+'.json');
+    applyBackupMarks(marksOf(data));
     toast('Full backup downloaded. Save another copy on a separate device.'); if(page==='backup')render();
   }
   async function exportAnalytics() {
@@ -448,8 +550,22 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
     if(data.app!=='Kirana Desk'||data.schemaVersion!==1||!['bills','counters','products','customers'].every(k=>Array.isArray(data[k])))throw new Error('This is not a valid Kirana Desk backup.');
     const merge=!!data.incremental;
     if(merge){ if(!confirm('Add '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers from this backup? Existing records on this computer are kept.'))return; }
-    else if(!confirm('Restore '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers? Current records on this computer will be replaced.'))return;
-    await new Promise((resolve,reject)=>{const tx=db.transaction(['bills','counters','products','customers','supplyorders'],'readwrite');['bills','counters','products','customers','supplyorders'].forEach(k=>{const st=tx.objectStore(k);if(!merge)st.clear();(Array.isArray(data[k])?data[k]:[]).forEach(x=>st.put(x));});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
+    else if(!confirm('Restore '+data.bills.length+' bills, '+data.products.length+' products, and '+data.customers.length+' customers? Current records on this computer will be replaced. A copy of the current records is downloaded first, just in case.'))return;
+    const cloudOn=!!(window.KiranaCloud&&window.KiranaCloud.configured&&window.KiranaCloud.user);
+    if(!merge){ try{ downloadJson(await fullBackupData('before-restore'),'kirana-before-restore-'+today()+'-'+backupStamp()+'.json'); }catch(e){ console.warn('Safety copy before restore failed.',e); } }
+    /* Bill numbers are never reused: a restored counter never goes below the highest number already used. */
+    const oldCounters=await localAll('counters'), oldBills=await localAll('bills'), top={};
+    const bump=(id,businessId,financialYear,n)=>{ if(!id)return; const c=top[id]||(top[id]={id,businessId,financialYear,lastNumber:0}); c.lastNumber=Math.max(c.lastNumber,Number(n)||0); };
+    oldCounters.concat(data.counters||[]).forEach(c=>bump(c.id,c.businessId,c.financialYear,c.lastNumber));
+    oldBills.concat(data.bills||[]).forEach(b=>{ if(b&&b.businessId&&b.financialYear)bump(b.businessId+':'+b.financialYear,b.businessId,b.financialYear,b.sequence); });
+    const counters=Object.keys(top).map(k=>top[k]);
+    const incoming={bills:data.bills||[],counters,products:data.products||[],customers:data.customers||[],supplyorders:Array.isArray(data.supplyorders)?data.supplyorders:[]};
+    await new Promise((resolve,reject)=>{const tx=db.transaction(BACKUP_STORES,'readwrite');BACKUP_STORES.forEach(k=>{const st=tx.objectStore(k);if(!merge)st.clear();incoming[k].forEach(x=>st.put(x));});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
+    if(cloudOn){
+      /* Shared workspace: write the restored records to the cloud too, so both computers get them back. Records made after the backup stay (nothing is ever deleted). */
+      let failed=0; for(const k of BACKUP_STORES){ await Promise.all(incoming[k].map(x=>window.KiranaCloud.write(k,x).catch(()=>{failed++;}))); }
+      if(failed)toast(failed+' records could not reach the shared workspace yet. They are on this computer.',true);
+    }
     localStorage.setItem('kiranaDeskLastBackup',data.exportedAt||new Date().toISOString()); localStorage.setItem('kiranaDeskSampleSeeded','yes'); scheduleAutoBackup(); toast('Backup restored.'); render();
   }
   async function unifyProducts() {
@@ -466,7 +582,7 @@ import { mergeConfig, buildBusyExport, latin1Bytes, makeZip, singleBillExport, f
   }
   async function seedSamples() {
     if(localStorage.getItem('kiranaDeskSampleSeeded'))return;
-    const existing=await Promise.all([all('bills'),all('products'),all('customers')]);
+    const existing=await Promise.all([allRaw('bills'),allRaw('products'),allRaw('customers')]);
     if(existing.some(records=>records.length)){localStorage.setItem('kiranaDeskSampleSeeded','yes');return;}
     const products={
       sampurn:[['Wheat Flour','kg'],['Rice','kg'],['Toor Dal','kg'],['Cooking Oil','litre']],
@@ -1021,16 +1137,21 @@ if(x==='add-supply'){supplyDialog({businessId:form==='all'?'sampurn':form,date:t
     if(x==='remove-so-file'){const v=$('#so-file-value');if(v)v.value='';const t=$('#so-file-type');if(t)t.value='';soCurrentFile='';renderSoFileArea($('#so-file-area'),'','',true);}
     if(x==='open-so-pdf'){if(!soCurrentFile){toast('No PDF attached.',true);return;}try{const b64=soCurrentFile.split(',')[1]||'';const arr=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));const url=URL.createObjectURL(new Blob([arr],{type:'application/pdf'}));window.open(url,'_blank');}catch(err){toast('Could not open the PDF.',true);}}
     if(x==='open-so-photo'){if(soCurrentFile)photoView(soCurrentFile);}
-    if(x==='delete-supply')all('supplyorders').then(rows=>{const o=rows.find(v=>v.id===a.dataset.id);if(!o)return;if(!confirm('Delete this supply order? The bills stay; only the link and the order file are removed.'))return;all('bills').then(bills=>{const touched=bills.filter(b=>b.supplyOrderId===o.id);return Promise.all(touched.map(b=>{delete b.supplyOrderId;return put('bills',b);})).then(()=>del('supplyorders',o.id));}).then(()=>{soDlg().close();toast('Supply order deleted.');render();}).catch(()=>toast('Could not delete the supply order.',true));});
+    if(x==='delete-supply')all('supplyorders').then(rows=>{const o=rows.find(v=>v.id===a.dataset.id);if(!o)return;if(!confirm('Delete this supply order? The bills stay; only the link and the order file are removed.'))return;all('bills').then(bills=>{const touched=bills.filter(b=>b.supplyOrderId===o.id);return Promise.all(touched.map(b=>{delete b.supplyOrderId;return put('bills',b);})).then(()=>del('supplyorders',o.id,{unlinkedBills:touched.map(b=>b.id)}));}).then(()=>{soDlg().close();toast('Supply order moved to the Recycle bin.');render();}).catch(()=>toast('Could not delete the supply order.',true));});
         if(x==='save-return'){if(a.dataset.busy)return;a.dataset.busy='1';setTimeout(()=>{delete a.dataset.busy;},1500);const billId=a.dataset.id;all('bills').then(items=>{const b=items.find(v=>v.id===billId);if(!b)return;const date=$('#return-date').value||today();const lines=[];b.items.forEach((it,idx)=>{const el=$('#ret-'+idx),q=el?parseFloat(el.value):0;if(q>0)lines.push({productName:it.productName,unit:it.unit||'',qty:q,price:Number(it.price)>0?Number(it.price):null});});if(!lines.length){toast('Enter how much came back for at least one item.',true);return;}b.returns=(b.returns||[]).concat([{id:uid(),date,items:lines}]);put('bills',b).then(()=>{retDlg().close();toast('Return saved.');render();all('bills').then(items2=>{const nb=items2.find(v=>v.id===billId);if(nb){billDialog(nb);$('#bill-dialog').showModal();}});});});}
-    if(x==='delete-return'){const billId=a.dataset.id,rid=a.dataset.rid;if(confirm('Delete this return entry?'))all('bills').then(items=>{const b=items.find(v=>v.id===billId);if(!b)return;b.returns=(b.returns||[]).filter(r=>r.id!==rid);put('bills',b).then(()=>{toast('Return entry removed.');returnDialog(b);});});}
+    if(x==='delete-return'){const billId=a.dataset.id,rid=a.dataset.rid;if(confirm('Delete this return entry? It moves to the Recycle bin and can be restored.'))all('bills').then(items=>{const b=items.find(v=>v.id===billId);if(!b)return;const gone=(b.returns||[]).find(r=>r.id===rid);b.returns=(b.returns||[]).filter(r=>r.id!==rid);if(gone)b.deletedReturns=(b.deletedReturns||[]).concat([Object.assign({},gone,{deletedAt:new Date().toISOString(),deletedBy:who()})]);put('bills',b).then(()=>{toast('Return entry moved to the Recycle bin.');returnDialog(b);});});}
     if(x==='returns-report')returnsReportDialog();
     if(x==='customer-register')returnsReportDialog(a.dataset.name);
     if(x==='generate-return-report')renderReturnReport();
     if(x==='print-return-report')printReturnReport();
     if(x==='open-bill-report')all('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);retDlg().close();if(b){billDialog(b);$('#bill-dialog').showModal();}});
-    if(x==='delete-bill'&&confirm('Delete this bill? Its number remains reserved and will never be reused.'))del('bills',a.dataset.id).then(()=>{$('#bill-dialog').close();toast('Bill deleted. Number remains reserved.');render();});
-    if(x==='delete-record'&&confirm('Delete this catalog entry? Existing bills will not change.'))del(a.dataset.kind,a.dataset.id).then(()=>{toast('Catalog entry removed.');render();});
+    if(x==='delete-bill'&&confirm('Delete this bill? It moves to the Recycle bin (Backup & restore page) and can be restored. Its number stays reserved and is never reused.'))del('bills',a.dataset.id).then(()=>{$('#bill-dialog').close();toast('Bill moved to the Recycle bin. Its number stays reserved.');render();});
+    if(x==='delete-record'&&confirm('Delete this catalog entry? It moves to the Recycle bin (Backup & restore page). Existing bills will not change.'))del(a.dataset.kind,a.dataset.id).then(()=>{toast('Moved to the Recycle bin.');render();});
+    if(x==='restore-deleted')restoreDeleted(a.dataset.kind,a.dataset.id,a.dataset.rid).catch(e=>{console.error(e);toast('Could not restore.',true);});
+    if(x==='view-deleted-bill')allRaw('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b){billDialog(b);$('#bill-dialog').showModal();}});
+    if(x==='bill-history')allRaw('bills').then(items=>{const b=items.find(v=>v.id===a.dataset.id);if(b)historyDialog(b);});
+    if(x==='daily-backup-now')dailyBackup(true);
+    if(x==='toggle-daily-backup'){if(localStorage.getItem(DAILY_OFF))localStorage.removeItem(DAILY_OFF);else localStorage.setItem(DAILY_OFF,'yes');render();}
 
     if(x==='set-backup-folder')pickBackupDir();
     if(x==='reallow-backup')reallowBackup();
@@ -1088,7 +1209,7 @@ if(e.target.id==='supply-form'){
       const idInput=e.target.querySelector('[name="billId"]'), billId=idInput?idInput.value:'';
       if(!data.customerName||!data.date||items.some(i=>!i.productName||!(i.quantity>0)||!i.unit)){toast('Fill in the customer, date, product, quantity, and unit.',true);return;}
       try{
-        if(billId){const existing=(await all('bills')).find(b=>b.id===billId);if(existing){existing.customerName=data.customerName;existing.notes=data.notes;existing.items=items;existing.photo=data.photo;existing.gst=data.gst;const noInput=$('#bill-no');if(noInput){const nn=noInput.value.trim();if(!nn){toast('Bill number cannot be empty.',true);return;}const dup=(await all('bills')).some(x=>x.id!==billId&&x.businessId===existing.businessId&&x.billNumber===nn);if(dup){toast('This bill number is already used on another bill.',true);return;}existing.billNumber=nn;}await put('bills',existing);$('#bill-dialog').close();toast(existing.billNumber+' updated.');render();return;}}
+        if(billId){const existing=(await all('bills')).find(b=>b.id===billId);if(existing){const prev=billSnapshot(existing);existing.customerName=data.customerName;existing.notes=data.notes;existing.items=items;existing.photo=data.photo;existing.gst=data.gst;const noInput=$('#bill-no');if(noInput){const nn=noInput.value.trim();if(!nn){toast('Bill number cannot be empty.',true);return;}const dup=(await allRaw('bills')).some(x=>x.id!==billId&&x.businessId===existing.businessId&&x.billNumber===nn);if(dup){toast('This bill number is already used on another bill (maybe one in the Recycle bin).',true);return;}existing.billNumber=nn;}if(billChanged(prev,existing,data.photo)){const now=new Date().toISOString();existing.history=(existing.history||[]).concat([{editedAt:now,editedBy:who(),prev}]).slice(-25);existing.editedAt=now;existing.editedBy=who();}await put('bills',existing);$('#bill-dialog').close();toast(existing.billNumber+' updated.');render();return;}}
         const added=await autoSaveCatalog(data).catch(()=>0);const saved=await makeBill(data);$('#bill-dialog').close();toast(saved.billNumber+' saved.');if(added)toast(added+(added===1?' new name saved to catalog.':' new names saved to catalog.'));billDialog(saved);$('#bill-dialog').showModal();render();
       }catch(err){console.error(err);toast(window.KiranaCloud&&window.KiranaCloud.configured?'Could not save. Check internet; shared bill numbering needs a connection.':'Could not save bill.',true);}
       }finally{delete bf.dataset.busy;}
@@ -1127,10 +1248,12 @@ if(e.target.id==='supply-form'){
               if(document.visibilityState==='visible')render().catch(console.warn);
             },error=>{console.warn('Cloud listener unavailable.',error);$('#online-label').textContent='Sync pending';});
             await render();
-            setTimeout(()=>maybeBackupPrompt().catch(console.warn),2500);
+            setTimeout(()=>dailyBackup().catch(console.warn).then(()=>maybeBackupPrompt()).catch(console.warn),1500);
           }catch(error){console.error(error);toast('Could not load shared records. Check the Firebase setup.',true);}
         });
-      }else{await seedSamples();await unifyProducts();$('#online-label').textContent=navigator.onLine?'Local only':'Working offline';await render();}
+      }else{await seedSamples();await unifyProducts();$('#online-label').textContent=navigator.onLine?'Local only':'Working offline';await render();setTimeout(()=>dailyBackup().catch(console.warn),1500);}
+      document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')dailyBackup().catch(console.warn);});
+      setInterval(()=>dailyBackup().catch(console.warn),30*60*1000);
       if('serviceWorker'in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').catch(console.info);
     }
     catch(err){console.error(err);$('#page-content').innerHTML=empty('Local storage unavailable','Open the app through a local web server or secure website. Browser storage is unavailable in this page context.');}
