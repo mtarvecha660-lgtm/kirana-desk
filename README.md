@@ -86,6 +86,15 @@ The file format is copied from a real Busy 21 (Rel 13.0) export of sale no. 37 (
    * several bills → a `.zip` with one `.xml` per bill (the way Busy itself writes `Sales-37.xml`). Unzip it into a new empty folder.
    * Bills with a line that has **no price** are skipped and listed on screen. Prices are taken as **including GST**; Busy's CGST/SGST split is reproduced to the paisa.
 
+### One bill only
+* Open the bill (Records → ↗) and press **⇩ Export to Busy**, or press **Alt+B** while the bill is open.
+* On **Records**, each row has a **⇩** button; Alt+B also works on a row selected with the arrow keys.
+* On **Export to Busy → Single bill**, type the bill no. (`RS/2026-27/0041` or just `41`) and press Enter.
+* It always downloads **one `.xml`** (never a zip), with the same settings as the range export, including the Busy company name. In Busy: **Add Sale → Paste → choose the file**, or Import Data.
+* If a line has no price, nothing downloads and a message names the items that need a price.
+
+**Default price.** Every new item line on a bill starts at price **1** (type the real price over it). Saved bills keep exactly what they had.
+
 ### In Busy 21
 1. Open the **test company**.
 2. **Administration → Data Export Import → Data Export/Import (XML) → Import Data**.
