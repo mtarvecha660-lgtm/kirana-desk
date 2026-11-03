@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildBusyExport, billToVoucher, voucherXml, splitInclusive, taxRateOf, makeZip, latin1Bytes, xesc } from '../busy-export.js';
+import { buildBusyExport, billToVoucher, voucherXml, splitInclusive, taxRateOf, makeZip, latin1Bytes, xesc, singleBillExport, findBillByNo } from '../busy-export.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const sample = fs.readFileSync(path.join(HERE, 'fixtures', 'busy-sale-37.xml'), 'latin1');
@@ -90,6 +90,26 @@ const seq = buildBusyExport([bills[1]], Object.assign({}, cfg, { vchNoMode: 'seq
 eq(val(seq.files[0].xml, 'VchNo'), '38', 'voucher number mode "sequence" → 38');
 const zip = makeZip(out.files.map(f => ({ name: f.name, bytes: latin1Bytes(f.xml) })));
 eq(new DataView(zip.buffer).getUint32(0, true), 0x04034b50, 'zip starts with a local file header');
+
+console.log('\n6. Single bill export');
+const one = singleBillExport(bill, cfg);
+ok(one.file && !one.problem, 'priced bill → one file');
+eq(one.file.name, out.files[0].name, 'same file name as the range export');
+eq(one.file.xml, out.files[0].xml, 'byte-for-byte the same XML as the range export (same voucherXml + settings)');
+ok(one.file.xml.startsWith('<?xml') && !one.file.xml.startsWith('PK'), 'a plain .xml, not a zip');
+ok(/<CompName>[^<]+<\/CompName><\/Sale>$/.test(one.file.xml), 'single bill carries CompName (for Busy Paste)');
+const bad = singleBillExport(Object.assign({}, bill, { items: [{ productName: 'Sugar', price: 44.6, quantity: 2, unit: 'kg' }, { productName: 'Rice', price: null, quantity: 1, unit: 'kg' }, { productName: 'Atta ', price: 0, quantity: 3, unit: 'kg' }] }), cfg);
+ok(!bad.file && /no price/.test(bad.problem), 'unpriced line → no file, a problem instead');
+eq(bad.unpriced.join(','), 'Rice,Atta', 'problem names exactly the unpriced items');
+ok(singleBillExport(null, cfg).problem, 'missing bill → problem, no crash');
+const pool = [{ id: 'a', businessId: 'sampurn', billNumber: 'RS/2025-26/0041', sequence: 41, date: '2025-11-01' }, { id: 'b', businessId: 'sampurn', billNumber: 'RS/2026-27/0041', sequence: 41, date: '2026-10-05' }, { id: 'c', businessId: 'surya', billNumber: 'SS/2026-27/0041', sequence: 41, date: '2026-10-09' }];
+eq((findBillByNo(pool, 'RS/2025-26/0041', 'sampurn') || {}).id, 'a', 'find by full bill no.');
+eq((findBillByNo(pool, 'rs/2026-27/0041 ', 'sampurn') || {}).id, 'b', 'full bill no. ignores case/spaces');
+eq((findBillByNo(pool, '41', 'sampurn') || {}).id, 'b', '"41" → newest RS bill 41');
+eq((findBillByNo(pool, '0041', 'surya') || {}).id, 'c', 'form filter respected');
+eq(findBillByNo(pool, '99', 'sampurn'), null, 'unknown number → null');
+fs.mkdirSync(path.join(HERE, 'out'), { recursive: true });
+fs.writeFileSync(path.join(HERE, 'out', 'single-' + one.file.name), Buffer.from(latin1Bytes(one.file.xml)));
 
 fs.mkdirSync(path.join(HERE, 'out'), { recursive: true });
 fs.writeFileSync(path.join(HERE, 'out', out.files[0].name), Buffer.from(latin1Bytes(out.files[0].xml)));
