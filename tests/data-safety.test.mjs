@@ -20,7 +20,25 @@ ok(/allow delete: if false;/.test(rules), 'firestore.rules denies delete for eve
 ok(/allow read, create, update: if isFamily\(\);/.test(rules), 'firestore.rules allows read/create/update only for the family');
 ok(rules.includes("'mtarvecha660@gmail.com'") && rules.includes("'moksh7tarvecha@gmail.com'"), 'both family emails are in the rules');
 ok(/match \/\{document=\*\*\}[\s\S]*allow read, write: if false;/.test(rules), 'everything else is closed');
-ok(/kirana-desk-v29/.test(sw), 'service worker cache is v29');
+ok(/kirana-desk-v30/.test(sw), 'service worker cache is v30');
+
+// No edit history (Nov 3): nothing in the app keeps previous versions of a bill
+ok(!/historyDialog|billSnapshot|bill-history|history-dialog|View previous versions/.test(app), 'app.js has no edit-history UI or snapshot code');
+ok(!/\.history\s*=/.test(app) && !/editedAt\s*[:=]/.test(app) && !/editedBy\s*[:=]/.test(app), 'app.js never writes history / editedAt / editedBy');
+ok(!/tag red[^']*'?>edited</.test(app), 'Records list has no "edited" tag');
+ok(/value = Object\.assign\(\{\}, store==='bills'\?noHistory\(value\)/.test(app), 'put() drops old history fields from a bill on save');
+ok(/incoming=\{bills:\(data\.bills\|\|\[\]\)\.map\(noHistory\)/.test(app), 'restore ignores history fields in a backup');
+ok(/dropFields\(name, key, fields\)[\s\S]{0,200}updateDoc[\s\S]{0,120}deleteField\(\)/.test(fb) && !/dropFields[\s\S]{0,250}setDoc/.test(fb.slice(fb.indexOf('dropFields'))), 'cloud cleanup removes only the named fields (updateDoc + deleteField)');
+const nh = app.match(/const HISTORY_FIELDS=\[[^\]]*\];\n\s*function noHistory\(r\)\{[^\n]*\}/);
+ok(!!nh, 'noHistory() helper found');
+const noHistory = nh ? new Function(nh[0] + '; return noHistory;')() : (x => x);
+const withH = { id: 'x', billNumber: 'RS/2026-27/0009', items: [{ productName: 'Sugar', quantity: 1 }], deleted: true, deletedAt: 'd', deletedBy: 'e', history: [{ prev: {} }], editedAt: 't', editedBy: 'u' };
+const stripped = noHistory(withH);
+ok(!('history' in stripped) && !('editedAt' in stripped) && !('editedBy' in stripped), 'noHistory() removes history, editedAt, editedBy');
+ok(stripped.deleted === true && stripped.deletedAt === 'd' && stripped.deletedBy === 'e' && stripped.billNumber === withH.billNumber && stripped.items === withH.items, 'noHistory() keeps everything else (Recycle bin fields included)');
+ok('history' in withH, 'noHistory() does not change the original record');
+const clean = { id: 'y', items: [] };
+ok(noHistory(clean) === clean, 'a bill without history is returned untouched');
 
 const item = { productName: 'Sugar', quantity: 2, unit: 'kg', price: 40 };
 const bills = [
